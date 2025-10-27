@@ -20,6 +20,43 @@ export default {
           900: '#1e3a8a',
         },
       },
+      animation: {
+        'blob': 'blob 7s infinite',
+        'float': 'float 6s ease-in-out infinite',
+        'shake': 'shake 0.5s',
+      },
+      keyframes: {
+        blob: {
+          '0%, 100%': {
+            transform: 'translate(0, 0) scale(1)',
+          },
+          '33%': {
+            transform: 'translate(30px, -50px) scale(1.1)',
+          },
+          '66%': {
+            transform: 'translate(-20px, 20px) scale(0.9)',
+          },
+        },
+        float: {
+          '0%, 100%': {
+            transform: 'translateY(0px)',
+          },
+          '50%': {
+            transform: 'translateY(-20px)',
+          },
+        },
+        shake: {
+          '0%, 100%': {
+            transform: 'translateX(0)',
+          },
+          '10%, 30%, 50%, 70%, 90%': {
+            transform: 'translateX(-4px)',
+          },
+          '20%, 40%, 60%, 80%': {
+            transform: 'translateX(4px)',
+          },
+        },
+      },
     },
   },
   plugins: [],
