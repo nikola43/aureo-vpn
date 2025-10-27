@@ -1,0 +1,347 @@
+package node
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/nikola43/aureo-vpn/pkg/database"
+	"github.com/nikola43/aureo-vpn/pkg/metrics"
+	"github.com/nikola43/aureo-vpn/pkg/models"
+	"github.com/nikola43/aureo-vpn/pkg/protocols/wireguard"
+	"gorm.io/gorm"
+)
+
+// Service manages VPN node operations
+type Service struct {
+	nodeID         uuid.UUID
+	db             *gorm.DB
+	wgManager      *wireguard.Manager
+	activeSessions map[uuid.UUID]*SessionInfo
+	mu             sync.RWMutex
+	ctx            context.Context
+	cancel         context.CancelFunc
+}
+
+// SessionInfo holds session information
+type SessionInfo struct {
+	Session       *models.Session
+	PublicKey     string
+	LastKeepalive time.Time
+}
+
+// NewService creates a new VPN node service
+func NewService(nodeID uuid.UUID) *Service {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	return &Service{
+		nodeID:         nodeID,
+		db:             database.GetDB(),
+		wgManager:      wireguard.NewManager("wg0"),
+		activeSessions: make(map[uuid.UUID]*SessionInfo),
+		ctx:            ctx,
+		cancel:         cancel,
+	}
+}
+
+// Start starts the VPN node service
+func (s *Service) Start() error {
+	log.Println("Starting VPN Node Service...")
+
+	// Load node configuration
+	var node models.VPNNode
+	if err := s.db.First(&node, s.nodeID).Error; err != nil {
+		return fmt.Errorf("failed to load node: %w", err)
+	}
+
+	// Generate server keypair if not exists
+	if node.PublicKey == "" {
+		keyPair, err := wireguard.GenerateKeyPair()
+		if err != nil {
+			return fmt.Errorf("failed to generate keypair: %w", err)
+		}
+
+		node.PublicKey = keyPair.PublicKey
+		// Store private key securely (in production, use KMS/Vault)
+		if err := s.db.Model(&node).Updates(map[string]interface{}{
+			"public_key": keyPair.PublicKey,
+		}).Error; err != nil {
+			return fmt.Errorf("failed to save public key: %w", err)
+		}
+	}
+
+	// Setup WireGuard interface
+	if err := s.setupWireGuard(&node); err != nil {
+		return fmt.Errorf("failed to setup WireGuard: %w", err)
+	}
+
+	// Start background tasks
+	go s.heartbeatLoop()
+	go s.sessionMonitor()
+	go s.metricsCollector()
+
+	log.Println("VPN Node Service started successfully")
+	return nil
+}
+
+// Stop stops the VPN node service
+func (s *Service) Stop() error {
+	log.Println("Stopping VPN Node Service...")
+	s.cancel()
+
+	// Disconnect all sessions
+	s.mu.Lock()
+	for sessionID := range s.activeSessions {
+		s.disconnectSession(sessionID)
+	}
+	s.mu.Unlock()
+
+	return nil
+}
+
+// setupWireGuard configures the WireGuard interface
+func (s *Service) setupWireGuard(node *models.VPNNode) error {
+	// This is a simplified setup - in production, retrieve private key from secure storage
+	privateKey := "PLACEHOLDER_PRIVATE_KEY" // TODO: Retrieve from KMS/Vault
+
+	config := wireguard.ServerConfig{
+		PrivateKey: privateKey,
+		Address:    node.InternalIP + "/24",
+		ListenPort: node.WireGuardPort,
+		PostUp: []string{
+			"iptables -A FORWARD -i wg0 -j ACCEPT",
+			"iptables -A FORWARD -o wg0 -j ACCEPT",
+			"iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE",
+		},
+		PostDown: []string{
+			"iptables -D FORWARD -i wg0 -j ACCEPT",
+			"iptables -D FORWARD -o wg0 -j ACCEPT",
+			"iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE",
+		},
+	}
+
+	return s.wgManager.SetupInterface(config)
+}
+
+// CreateSession creates a new VPN session
+func (s *Service) CreateSession(userID uuid.UUID, protocol string) (*models.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Load node
+	var node models.VPNNode
+	if err := s.db.First(&node, s.nodeID).Error; err != nil {
+		return nil, fmt.Errorf("failed to load node: %w", err)
+	}
+
+	// Check if node has capacity
+	if node.CurrentConnections >= node.MaxConnections {
+		return nil, fmt.Errorf("node at maximum capacity")
+	}
+
+	// Generate client keypair
+	keyPair, err := wireguard.GenerateKeyPair()
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate keypair: %w", err)
+	}
+
+	// Allocate IP address
+	var usedIPs []string
+	s.db.Model(&models.Session{}).
+		Where("node_id = ? AND status = ?", s.nodeID, "active").
+		Pluck("tunnel_ip", &usedIPs)
+
+	tunnelIP, err := wireguard.AllocateClientIP(node.InternalIP+"/24", usedIPs)
+	if err != nil {
+		return nil, fmt.Errorf("failed to allocate IP: %w", err)
+	}
+
+	// Create session
+	session := &models.Session{
+		UserID:             userID,
+		NodeID:             s.nodeID,
+		Protocol:           protocol,
+		TunnelIP:           tunnelIP,
+		PublicKey:          keyPair.PublicKey,
+		PrivateKey:         keyPair.PrivateKey, // Encrypted in production
+		Status:             "active",
+		ConnectedAt:        time.Now(),
+		LastKeepalive:      time.Now(),
+		KillSwitchEnabled:  true,
+		DNSLeakProtection:  true,
+	}
+
+	if err := s.db.Create(session).Error; err != nil {
+		return nil, fmt.Errorf("failed to create session: %w", err)
+	}
+
+	// Add peer to WireGuard
+	peer := wireguard.PeerConfig{
+		PublicKey:           keyPair.PublicKey,
+		AllowedIPs:          []string{tunnelIP},
+		PersistentKeepalive: 25,
+	}
+
+	if err := s.wgManager.AddPeer(peer); err != nil {
+		s.db.Delete(session)
+		return nil, fmt.Errorf("failed to add peer: %w", err)
+	}
+
+	// Update node connection count
+	s.db.Model(&node).UpdateColumn("current_connections", gorm.Expr("current_connections + ?", 1))
+
+	// Store in active sessions
+	s.activeSessions[session.ID] = &SessionInfo{
+		Session:       session,
+		PublicKey:     keyPair.PublicKey,
+		LastKeepalive: time.Now(),
+	}
+
+	// Update metrics
+	metrics.ActiveConnections.WithLabelValues(protocol, node.Name).Inc()
+	metrics.ConnectionsTotal.WithLabelValues(protocol, node.Name, "success").Inc()
+
+	log.Printf("Created session %s for user %s", session.ID, userID)
+	return session, nil
+}
+
+// DisconnectSession disconnects a VPN session
+func (s *Service) DisconnectSession(sessionID uuid.UUID) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.disconnectSession(sessionID)
+}
+
+func (s *Service) disconnectSession(sessionID uuid.UUID) error {
+	sessionInfo, ok := s.activeSessions[sessionID]
+	if !ok {
+		return fmt.Errorf("session not found")
+	}
+
+	// Remove peer from WireGuard
+	if err := s.wgManager.RemovePeer(sessionInfo.PublicKey); err != nil {
+		log.Printf("Failed to remove peer: %v", err)
+	}
+
+	// Update session in database
+	now := time.Now()
+	updates := map[string]interface{}{
+		"status":          "disconnected",
+		"disconnected_at": &now,
+	}
+
+	if err := s.db.Model(&models.Session{}).Where("id = ?", sessionID).Updates(updates).Error; err != nil {
+		return fmt.Errorf("failed to update session: %w", err)
+	}
+
+	// Update node connection count
+	s.db.Model(&models.VPNNode{}).Where("id = ?", s.nodeID).
+		UpdateColumn("current_connections", gorm.Expr("current_connections - ?", 1))
+
+	// Remove from active sessions
+	delete(s.activeSessions, sessionID)
+
+	// Update metrics
+	var node models.VPNNode
+	s.db.First(&node, s.nodeID)
+	metrics.ActiveConnections.WithLabelValues(sessionInfo.Session.Protocol, node.Name).Dec()
+
+	log.Printf("Disconnected session %s", sessionID)
+	return nil
+}
+
+// heartbeatLoop sends periodic heartbeats to the control server
+func (s *Service) heartbeatLoop() {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.sendHeartbeat()
+		}
+	}
+}
+
+func (s *Service) sendHeartbeat() {
+	updates := map[string]interface{}{
+		"last_heartbeat": time.Now(),
+		"status":         "online",
+	}
+
+	if err := s.db.Model(&models.VPNNode{}).Where("id = ?", s.nodeID).Updates(updates).Error; err != nil {
+		log.Printf("Failed to send heartbeat: %v", err)
+	}
+}
+
+// sessionMonitor monitors active sessions
+func (s *Service) sessionMonitor() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkInactiveSessions()
+		}
+	}
+}
+
+func (s *Service) checkInactiveSessions() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for sessionID, sessionInfo := range s.activeSessions {
+		// Disconnect sessions with no keepalive for 10 minutes
+		if time.Since(sessionInfo.LastKeepalive) > 10*time.Minute {
+			log.Printf("Session %s inactive, disconnecting", sessionID)
+			s.disconnectSession(sessionID)
+		}
+	}
+}
+
+// metricsCollector collects and updates metrics
+func (s *Service) metricsCollector() {
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.collectMetrics()
+		}
+	}
+}
+
+func (s *Service) collectMetrics() {
+	var node models.VPNNode
+	if err := s.db.First(&node, s.nodeID).Error; err != nil {
+		return
+	}
+
+	// Update load score
+	loadScore := node.CalculateLoadScore()
+	s.db.Model(&node).UpdateColumn("load_score", loadScore)
+
+	// Update metrics
+	status := 0.0
+	if node.Status == "online" {
+		status = 1.0
+	}
+
+	metrics.NodeStatus.WithLabelValues(node.Name, node.Country, node.City).Set(status)
+	metrics.NodeLoad.WithLabelValues(node.Name).Set(loadScore)
+	metrics.NodeCPUUsage.WithLabelValues(node.Name).Set(node.CPUUsage)
+	metrics.NodeMemoryUsage.WithLabelValues(node.Name).Set(node.MemoryUsage)
+	metrics.NodeBandwidth.WithLabelValues(node.Name).Set(node.BandwidthUsageGbps)
+}

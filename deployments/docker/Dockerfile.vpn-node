@@ -1,0 +1,34 @@
+# Build stage
+FROM golang:1.22-alpine AS builder
+
+WORKDIR /app
+
+RUN apk add --no-cache git
+
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o vpn-node ./cmd/vpn-node
+
+# Runtime stage
+FROM alpine:latest
+
+# Install WireGuard and iptables
+RUN apk --no-cache add \
+    wireguard-tools \
+    iptables \
+    ip6tables \
+    ca-certificates
+
+# Enable IP forwarding
+RUN echo "net.ipv4.ip_forward=1" >> /etc/sysctl.conf && \
+    echo "net.ipv6.conf.all.forwarding=1" >> /etc/sysctl.conf
+
+WORKDIR /root/
+
+COPY --from=builder /app/vpn-node .
+
+# Run with elevated privileges for network management
+CMD ["./vpn-node"]
