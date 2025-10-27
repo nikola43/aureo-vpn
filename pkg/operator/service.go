@@ -10,6 +10,7 @@ import (
 	apperrors "github.com/nikola43/aureo-vpn/pkg/errors"
 	"github.com/nikola43/aureo-vpn/pkg/logger"
 	"github.com/nikola43/aureo-vpn/pkg/models"
+	"github.com/nikola43/aureo-vpn/pkg/protocols/wireguard"
 	"github.com/nikola43/aureo-vpn/pkg/rewards"
 	"gorm.io/gorm"
 )
@@ -120,8 +121,10 @@ func (s *Service) CreateNode(ctx context.Context, operatorID uuid.UUID, req Node
 	}
 
 	// Generate WireGuard keypair
-	// This would be done using the wireguard package
-	publicKey := "OPERATOR_NODE_" + uuid.New().String()[:16] // Placeholder
+	keyPair, err := wireguard.GenerateKeyPair()
+	if err != nil {
+		return nil, "", apperrors.ErrInternal.WithInternal(fmt.Errorf("failed to generate WireGuard keypair: %w", err))
+	}
 
 	// Create node
 	node := &models.VPNNode{
@@ -135,7 +138,7 @@ func (s *Service) CreateNode(ctx context.Context, operatorID uuid.UUID, req Node
 		Longitude:           req.Longitude,
 		WireGuardPort:       req.WireGuardPort,
 		OpenVPNPort:         req.OpenVPNPort,
-		PublicKey:           publicKey,
+		PublicKey:           keyPair.PublicKey,
 		Status:              "offline", // Will be online when node connects
 		IsActive:            true,
 		SupportsWireGuard:   true,
@@ -160,7 +163,7 @@ func (s *Service) CreateNode(ctx context.Context, operatorID uuid.UUID, req Node
 		"location", fmt.Sprintf("%s, %s", node.City, node.Country),
 	)
 
-	return node, publicKey, nil
+	return node, keyPair.PrivateKey, nil
 }
 
 // GetOperatorStats retrieves comprehensive statistics for an operator
