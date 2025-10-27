@@ -26,7 +26,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Configuration
-API_URL="${API_URL:-http://localhost:8080/api/v1}"
+API_URL="${API_URL:-http://155.138.238.145:8080/api/v1}"
 CONFIG_DIR="/tmp/.aureo-vpn-$USER"
 SESSION_FILE="$CONFIG_DIR/.session"
 CONNECTION_FILE="$CONFIG_DIR/.connection"
@@ -155,8 +155,8 @@ cmd_connect() {
     RESPONSE=$(curl -s -X GET "$API_URL/operator/nodes" \
         -H "Authorization: Bearer $TOKEN")
 
-    # Parse nodes into arrays
-    NODES=$(echo "$RESPONSE" | jq -r '.nodes[] | "\(.id)|\(.name)|\(.public_ip)|\(.city),\(.country)|\(.status)"')
+    # Parse nodes into arrays (include public_key and wireguard_port)
+    NODES=$(echo "$RESPONSE" | jq -r '.nodes[] | "\(.id)|\(.name)|\(.public_ip)|\(.city),\(.country)|\(.status)|\(.public_key)|\(.wireguard_port)"')
 
     if [ -z "$NODES" ]; then
         echo -e "${RED}✗ No nodes available${NC}"
@@ -168,7 +168,7 @@ cmd_connect() {
     echo ""
 
     i=1
-    while IFS='|' read -r id name ip location status; do
+    while IFS='|' read -r id name ip location status pubkey wgport; do
         STATUS_COLOR="${GREEN}"
         [ "$status" != "online" ] && STATUS_COLOR="${YELLOW}"
         echo -e "  ${CYAN}[$i]${NC} ${BLUE}$name${NC}"
@@ -192,16 +192,11 @@ cmd_connect() {
     NODE_ID=$(echo "$NODE" | cut -d'|' -f1)
     NODE_NAME=$(echo "$NODE" | cut -d'|' -f2)
     NODE_IP=$(echo "$NODE" | cut -d'|' -f3)
+    WG_PUBKEY=$(echo "$NODE" | cut -d'|' -f6)
+    WG_PORT=$(echo "$NODE" | cut -d'|' -f7)
 
     echo ""
     echo -e "${CYAN}Connecting to ${BLUE}$NODE_NAME${NC}..."
-
-    # Get node details for WireGuard config
-    NODE_DETAILS=$(curl -s -X GET "$API_URL/operator/nodes/$NODE_ID" \
-        -H "Authorization: Bearer $TOKEN")
-
-    WG_PORT=$(echo "$NODE_DETAILS" | jq -r '.node.wireguard_port')
-    WG_PUBKEY=$(echo "$NODE_DETAILS" | jq -r '.node.public_key')
 
     # Generate WireGuard keys
     WG_PRIVATE=$(wg genkey)
@@ -239,7 +234,7 @@ EOF
         echo "NODE_ID=$NODE_ID" > "$CONNECTION_FILE"
         echo "NODE_NAME=$NODE_NAME" >> "$CONNECTION_FILE"
         echo "NODE_IP=$NODE_IP" >> "$CONNECTION_FILE"
-        echo "CONNECTED_AT=$(date '+%Y-%m-%d %H:%M:%S')" >> "$CONNECTION_FILE"
+        echo "CONNECTED_AT=\"$(date '+%Y-%m-%d %H:%M:%S')\"" >> "$CONNECTION_FILE"
 
         echo ""
         echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
