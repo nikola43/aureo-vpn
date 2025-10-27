@@ -1,7 +1,11 @@
 package api
 
 import (
+	"encoding/json"
+	"fmt"
+	"os/exec"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -673,9 +677,52 @@ func (h *Handlers) GetSession(c *fiber.Ctx) error {
 
 // GenerateConfig generates VPN configuration
 func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error": "generate config not implemented yet",
-	})
+	var req struct {
+		PublicKey string `json:"public_key"`
+		NodeID    string `json:"node_id"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request body",
+		})
+	}
+
+	if req.PublicKey == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "public_key is required",
+		})
+	}
+
+	// Call the peer registration script
+	cmd := exec.Command("/opt/aureo-vpn/add-wireguard-peer.sh", req.PublicKey)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": fmt.Sprintf("failed to register peer: %s", string(output)),
+		})
+	}
+
+	// Parse JSON output from script
+	var config map[string]interface{}
+	outputStr := string(output)
+
+	// Find JSON start
+	jsonStart := strings.Index(outputStr, "{")
+	if jsonStart == -1 {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to parse configuration",
+		})
+	}
+
+	jsonStr := outputStr[jsonStart:]
+	if err := json.Unmarshal([]byte(jsonStr), &config); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to parse configuration",
+		})
+	}
+
+	return c.JSON(config)
 }
 
 // GetConfig returns a specific configuration

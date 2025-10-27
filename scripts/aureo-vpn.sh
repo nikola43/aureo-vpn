@@ -199,19 +199,49 @@ cmd_connect() {
     echo -e "${CYAN}Connecting to ${BLUE}$NODE_NAME${NC}..."
 
     # Generate WireGuard keys
+    echo -e "${CYAN}Generating WireGuard keys...${NC}"
     WG_PRIVATE=$(wg genkey)
     WG_PUBLIC=$(echo "$WG_PRIVATE" | wg pubkey)
+
+    # Register peer with API
+    echo -e "${CYAN}Registering with VPN server...${NC}"
+    REGISTER_RESPONSE=$(curl -s -X POST "$API_URL/config/generate" \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"public_key\":\"$WG_PUBLIC\",\"node_id\":\"$NODE_ID\"}")
+
+    # Check for errors
+    if echo "$REGISTER_RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
+        ERROR_MSG=$(echo "$REGISTER_RESPONSE" | jq -r '.error')
+        echo -e "${RED}✗ Registration failed: $ERROR_MSG${NC}"
+        exit 1
+    fi
+
+    # Extract configuration from response
+    SERVER_PUBKEY=$(echo "$REGISTER_RESPONSE" | jq -r '.server_public_key')
+    SERVER_ENDPOINT=$(echo "$REGISTER_RESPONSE" | jq -r '.server_endpoint')
+    CLIENT_IP=$(echo "$REGISTER_RESPONSE" | jq -r '.client_ip')
+    DNS_SERVERS=$(echo "$REGISTER_RESPONSE" | jq -r '.dns')
+
+    if [ -z "$SERVER_PUBKEY" ] || [ "$SERVER_PUBKEY" = "null" ]; then
+        echo -e "${RED}✗ Failed to get configuration from server${NC}"
+        echo "$REGISTER_RESPONSE"
+        exit 1
+    fi
+
+    echo -e "${GREEN}✓ Registered successfully${NC}"
+    echo -e "${CYAN}  Your VPN IP: ${GREEN}$CLIENT_IP${NC}"
 
     # Create WireGuard config
     cat > "$WG_CONFIG" << EOF
 [Interface]
 PrivateKey = $WG_PRIVATE
-Address = 10.8.0.2/32
-DNS = 1.1.1.1, 8.8.8.8
+Address = $CLIENT_IP/32
+DNS = $DNS_SERVERS
 
 [Peer]
-PublicKey = $WG_PUBKEY
-Endpoint = $NODE_IP:$WG_PORT
+PublicKey = $SERVER_PUBKEY
+Endpoint = $SERVER_ENDPOINT
 AllowedIPs = 0.0.0.0/0
 PersistentKeepalive = 25
 EOF
