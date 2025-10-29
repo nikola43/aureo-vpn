@@ -14,30 +14,37 @@ export const Dashboard: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    loadDashboard();
+    loadDashboard(true); // Initial load with loading state
 
     // Auto-refresh dashboard every 5 seconds for real-time updates
     const interval = setInterval(() => {
-      loadDashboard();
+      loadDashboard(false); // Refresh without showing loading state
     }, 5000);
 
     return () => clearInterval(interval);
   }, []);
 
-  const loadDashboard = async () => {
+  const loadDashboard = async (showLoading = true) => {
     try {
-      setLoading(true);
+      if (showLoading) {
+        setLoading(true);
+      }
       const dashboard = await api.getOperatorDashboard();
       setData(dashboard);
+      setError(null); // Clear any previous errors on successful load
     } catch (err: any) {
       // If 403, user is not registered as operator
       if (err.response?.status === 403) {
         window.location.href = '/register-operator';
         return;
       }
-      setError(err.message || 'Failed to load dashboard');
+      if (showLoading) {
+        setError(err.message || 'Failed to load dashboard');
+      }
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   };
 
