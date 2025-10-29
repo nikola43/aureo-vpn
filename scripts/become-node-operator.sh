@@ -126,9 +126,9 @@ check_prerequisites() {
     echo -e "${GREEN}✓ Project files found${NC}"
 }
 
-# Deploy services
-deploy_services() {
-    section "🐳 Deploying Services"
+# Deploy base services (everything except VPN node)
+deploy_base_services() {
+    section "🐳 Deploying Base Services"
 
     cd "$PROJECT_ROOT"
 
@@ -137,11 +137,11 @@ deploy_services() {
     # Stop any existing containers
     $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" down 2>/dev/null || true
 
-    # Build and start services
-    $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" up -d --build
+    # Start only base services (postgres, redis, api, dashboard, control, prometheus, grafana)
+    $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" up -d --build postgres redis api-gateway control-server dashboard prometheus grafana
 
     echo -e "${YELLOW}Waiting for services to be ready...${NC}"
-    sleep 10
+    sleep 15
 
     # Check services are running
     if ! $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" ps | grep -q "Up"; then
@@ -150,7 +150,63 @@ deploy_services() {
         exit 1
     fi
 
-    echo -e "${GREEN}✓ All services deployed successfully${NC}"
+    echo -e "${GREEN}✓ Base services deployed successfully${NC}"
+}
+
+# Deploy VPN node after registration
+deploy_vpn_node() {
+    section "🚀 Deploying VPN Node"
+
+    cd "$PROJECT_ROOT"
+
+    # Create/update .env file with NODE_ID
+    mkdir -p "$PROJECT_ROOT/deployments/docker"
+    echo "NODE_ID_1=$NODE_ID" > "$PROJECT_ROOT/deployments/docker/.env"
+
+    echo -e "${YELLOW}Starting VPN node with NODE_ID: $NODE_ID${NC}"
+
+    # Start VPN node container
+    $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" up -d --build vpn-node-1
+
+    echo -e "${YELLOW}Waiting for VPN node to initialize...${NC}"
+    sleep 10
+
+    # Check if VPN node is running
+    if ! docker ps | grep -q "aureo-vpn-node-1"; then
+        echo -e "${RED}✗ VPN node failed to start${NC}"
+        echo -e "${YELLOW}Check logs: docker logs aureo-vpn-node-1${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}✓ VPN node deployed successfully${NC}"
+}
+
+# Finalize node setup (WireGuard configuration)
+finalize_node_setup() {
+    section "⚙️  Finalizing Node Configuration"
+
+    # Wait a bit more for WireGuard to be ready
+    sleep 5
+
+    # Get WireGuard server public key and update node
+    echo -e "${CYAN}Configuring WireGuard...${NC}"
+    WG_PUBLIC_KEY=$(docker exec aureo-vpn-node-1 wg show wg0 public-key 2>/dev/null || echo "")
+
+    if [ -n "$WG_PUBLIC_KEY" ]; then
+        docker exec aureo-vpn-db psql -U postgres -d aureo_vpn -c \
+            "UPDATE vpn_nodes SET public_key='$WG_PUBLIC_KEY' WHERE id='$NODE_ID';" \
+            >/dev/null 2>&1
+        echo -e "${GREEN}✓ WireGuard public key configured${NC}"
+    else
+        echo -e "${YELLOW}⚠ Could not get WireGuard public key yet${NC}"
+    fi
+
+    # Verify WireGuard is running
+    if docker exec aureo-vpn-node-1 wg show wg0 >/dev/null 2>&1; then
+        echo -e "${GREEN}✓ WireGuard interface is active${NC}"
+    else
+        echo -e "${YELLOW}⚠ WireGuard interface not ready yet${NC}"
+    fi
 }
 
 # Setup peer registration script
@@ -290,7 +346,7 @@ EOF
     chmod 600 "$CONFIG_DIR/operator-credentials"
 }
 
-# Register VPN node
+# Register VPN node in database
 register_node() {
     section "🖥️  Registering Your VPN Node"
 
@@ -310,21 +366,8 @@ register_node() {
     # Source operator credentials
     source "$CONFIG_DIR/operator-credentials"
 
-    # Get NODE_ID from environment or generate
-    if [ -z "$NODE_ID_1" ]; then
-        # Generate a UUID for the node
-        NODE_ID_1=$(cat /proc/sys/kernel/random/uuid)
-
-        # Update docker-compose environment
-        echo "NODE_ID_1=$NODE_ID_1" >> "$PROJECT_ROOT/deployments/docker/.env"
-
-        # Restart vpn-node container with new NODE_ID
-        $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" restart vpn-node-1
-        sleep 5
-    fi
-
-    # Register node with API
-    echo -e "\n${BLUE}Registering VPN node with network...${NC}"
+    # Register node with API (this creates the database entry)
+    echo -e "\n${BLUE}Registering VPN node in database...${NC}"
 
     NODE_RESPONSE=$(curl -s -X POST "$API_URL/api/v1/operator/nodes" \
         -H "Content-Type: application/json" \
@@ -346,31 +389,18 @@ register_node() {
     NODE_ID=$(echo "$NODE_RESPONSE" | jq -r '.node.id')
 
     if [ "$NODE_ID" != "null" ] && [ -n "$NODE_ID" ]; then
-        echo -e "${GREEN}✓ VPN node registered successfully${NC}"
+        echo -e "${GREEN}✓ VPN node registered in database${NC}"
         echo -e "${BLUE}  Node ID: $NODE_ID${NC}"
 
         # Set node status to online
-        echo -e "${CYAN}Activating node...${NC}"
         docker exec aureo-vpn-db psql -U postgres -d aureo_vpn -c \
             "UPDATE vpn_nodes SET status='online', last_heartbeat=NOW() WHERE id='$NODE_ID';" \
             >/dev/null 2>&1
-
-        # Get WireGuard server public key and update node
-        echo -e "${CYAN}Configuring WireGuard...${NC}"
-        WG_PUBLIC_KEY=$(docker exec aureo-vpn-node-1 wg show wg0 public-key 2>/dev/null || echo "")
-        if [ -n "$WG_PUBLIC_KEY" ]; then
-            docker exec aureo-vpn-db psql -U postgres -d aureo_vpn -c \
-                "UPDATE vpn_nodes SET public_key='$WG_PUBLIC_KEY' WHERE id='$NODE_ID';" \
-                >/dev/null 2>&1
-            echo -e "${GREEN}✓ WireGuard public key configured${NC}"
-        fi
 
         # Recalculate operator stats
         docker exec aureo-vpn-db psql -U postgres -d aureo_vpn -c \
             "UPDATE node_operators SET active_nodes_count = (SELECT COUNT(*) FROM vpn_nodes WHERE operator_id = node_operators.id AND status = 'online' AND is_active = true);" \
             >/dev/null 2>&1
-
-        echo -e "${GREEN}✓ Node activated and online${NC}"
 
         # Save node info
         cat >> "$CONFIG_DIR/operator-credentials" << EOF
@@ -379,6 +409,11 @@ NODE_NAME=$NODE_NAME
 PUBLIC_IP=$PUBLIC_IP
 INTERNAL_IP=$INTERNAL_IP
 EOF
+
+        # Export NODE_ID for use in next steps
+        export NODE_ID
+
+        echo -e "${GREEN}✓ Node registration complete${NC}"
     else
         echo -e "${RED}✗ Failed to register node${NC}"
         echo "Response: $NODE_RESPONSE"
@@ -482,9 +517,10 @@ main() {
 
     echo ""
     echo -e "${YELLOW}This script will:${NC}"
-    echo "  ✓ Deploy all services using Docker Compose"
+    echo "  ✓ Deploy base services (Database, API, Dashboard)"
     echo "  ✓ Create your operator account"
-    echo "  ✓ Register and activate your VPN node"
+    echo "  ✓ Register your VPN node in database"
+    echo "  ✓ Deploy VPN node with proper configuration"
     echo "  ✓ Configure peer registration"
     echo "  ✓ Setup monitoring"
     echo ""
@@ -497,11 +533,28 @@ main() {
         exit 0
     fi
 
-    deploy_services
+    # Step 1: Deploy base services (without VPN node)
+    deploy_base_services
+
+    # Step 2: Setup peer script
     setup_peer_script
+
+    # Step 3: Create operator account
     create_operator_account
+
+    # Step 4: Register node in database (get NODE_ID)
     register_node
+
+    # Step 5: Deploy VPN node with the NODE_ID
+    deploy_vpn_node
+
+    # Step 6: Configure WireGuard and finalize
+    finalize_node_setup
+
+    # Step 7: Setup monitoring
     setup_monitoring
+
+    # Step 8: Show summary
     print_summary
 
     echo -e "\n${GREEN}🚀 Node Operator Setup Completed Successfully!${NC}\n"
