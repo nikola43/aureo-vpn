@@ -203,12 +203,30 @@ func (op *NodeOperator) UpdateStats(db *gorm.DB) error {
 		Select("COALESCE(SUM(amount_usd), 0)").
 		Scan(&totalEarned)
 
-	// Calculate pending payout
-	var pendingPayout float64
+	// Calculate total bandwidth from all operator nodes (in KB)
+	var totalBandwidthKB int64
+	db.Model(&VPNNode{}).
+		Where("operator_id = ?", op.ID).
+		Select("COALESCE(SUM(total_bandwidth_kb), 0)").
+		Scan(&totalBandwidthKB)
+
+	// Calculate pending payout based on bandwidth
+	// Rate: $0.10 per GB ($0.0001 per KB)
+	// Formula: (totalBandwidthKB / 1024 / 1024) * $0.10
+	ratePerKB := 0.0001 / 1024.0 / 1024.0 * 0.10 // $0.10 per GB
+	pendingPayout := float64(totalBandwidthKB) * ratePerKB
+
+	// Subtract already paid amounts
+	var totalPaid float64
 	db.Model(&OperatorEarning{}).
-		Where("operator_id = ? AND status = ?", op.ID, "pending").
+		Where("operator_id = ? AND status = ?", op.ID, "confirmed").
 		Select("COALESCE(SUM(amount_usd), 0)").
-		Scan(&pendingPayout)
+		Scan(&totalPaid)
+
+	pendingPayout = pendingPayout - totalPaid
+	if pendingPayout < 0 {
+		pendingPayout = 0
+	}
 
 	// Count active nodes
 	var activeNodes int64
@@ -229,6 +247,7 @@ func (op *NodeOperator) UpdateStats(db *gorm.DB) error {
 		"pending_payout":     pendingPayout,
 		"active_nodes_count": activeNodes,
 		"average_uptime":     avgUptime,
+		"total_bandwidth_kb": totalBandwidthKB,
 	}).Error
 }
 

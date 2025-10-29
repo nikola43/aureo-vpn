@@ -31,7 +31,8 @@ type VPNNode struct {
 	CPUUsage           float64 `gorm:"default:0" json:"cpu_usage"`
 	MemoryUsage        float64 `gorm:"default:0" json:"memory_usage"`
 	BandwidthUsageGbps float64 `gorm:"default:0" json:"bandwidth_usage_gbps"`
-	LoadScore          float64 `gorm:"default:0;index" json:"load_score"` // 0-100, lower is better
+	TotalBandwidthKB   int64   `gorm:"default:0" json:"total_bandwidth_kb"` // Cumulative traffic in kilobytes
+	LoadScore          float64 `gorm:"default:0;index" json:"load_score"`   // 0-100, lower is better
 
 	// Status and health
 	Status         string    `gorm:"default:'offline'" json:"status"` // online, offline, maintenance

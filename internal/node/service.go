@@ -311,6 +311,16 @@ func (s *Service) sendHeartbeat() {
 
 	if err := s.db.Model(&models.VPNNode{}).Where("id = ?", s.nodeID).Updates(updates).Error; err != nil {
 		log.Printf("Failed to send heartbeat: %v", err)
+		return
+	}
+
+	// Update operator stats (pending payout, etc.) every heartbeat
+	var node models.VPNNode
+	if err := s.db.First(&node, s.nodeID).Error; err == nil && node.OperatorID != nil {
+		var operator models.NodeOperator
+		if err := s.db.First(&operator, node.OperatorID).Error; err == nil {
+			operator.UpdateStats(s.db)
+		}
 	}
 }
 
@@ -448,16 +458,34 @@ func (s *Service) updateTrafficStats() {
 		currentTrafficMbps = (bytesPerSecond * 8) / 1_000_000
 	}
 
+	// Calculate bytes transferred since last check
+	var bytesTransferredSinceLastCheck int64
+	if s.lastTrafficCheck.Unix() > 0 {
+		bytesSentDiff := totalBytesSent - s.lastBytesSent
+		bytesReceivedDiff := totalBytesReceived - s.lastBytesReceived
+		bytesTransferredSinceLastCheck = bytesSentDiff + bytesReceivedDiff
+	}
+
 	// Update tracking variables
 	s.lastBytesSent = totalBytesSent
 	s.lastBytesReceived = totalBytesReceived
 	s.lastTrafficCheck = now
 	s.trafficMu.Unlock()
 
-	// Update node's bandwidth usage in database
-	s.db.Model(&models.VPNNode{}).
-		Where("id = ?", s.nodeID).
-		UpdateColumn("bandwidth_usage_gbps", currentTrafficMbps/1000.0) // Convert Mbps to Gbps
+	// Update node's bandwidth usage and total traffic in database
+	if bytesTransferredSinceLastCheck > 0 {
+		kbTransferred := bytesTransferredSinceLastCheck / 1024
+		s.db.Model(&models.VPNNode{}).
+			Where("id = ?", s.nodeID).
+			Updates(map[string]interface{}{
+				"bandwidth_usage_gbps": currentTrafficMbps / 1000.0, // Convert Mbps to Gbps
+				"total_bandwidth_kb":   gorm.Expr("total_bandwidth_kb + ?", kbTransferred),
+			})
+	} else {
+		s.db.Model(&models.VPNNode{}).
+			Where("id = ?", s.nodeID).
+			UpdateColumn("bandwidth_usage_gbps", currentTrafficMbps/1000.0) // Convert Mbps to Gbps
+	}
 }
 
 // GetConnectedUsers returns the number of currently connected users
