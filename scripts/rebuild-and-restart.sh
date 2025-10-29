@@ -24,8 +24,12 @@ echo ""
 # Get script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DOCKER_COMPOSE_FILE="$PROJECT_ROOT/deployments/docker/docker-compose.yml"
 
 cd "$PROJECT_ROOT"
+
+# Docker compose command with file path
+DOCKER_COMPOSE="docker-compose -f $DOCKER_COMPOSE_FILE"
 
 echo -e "${YELLOW}Step 1/5: Stopping all containers...${NC}"
 docker-compose down || true

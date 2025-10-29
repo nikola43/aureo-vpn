@@ -24,8 +24,18 @@ NC='\033[0m'
 # Get script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+DOCKER_COMPOSE_FILE="$PROJECT_ROOT/deployments/docker/docker-compose.yml"
+
+# Check if docker-compose file exists
+if [ ! -f "$DOCKER_COMPOSE_FILE" ]; then
+    echo -e "${RED}ERROR: docker-compose.yml not found at $DOCKER_COMPOSE_FILE${NC}"
+    exit 1
+fi
 
 cd "$PROJECT_ROOT"
+
+# Docker compose command with file path
+DOCKER_COMPOSE="docker-compose -f $DOCKER_COMPOSE_FILE"
 
 banner() {
     echo -e "${PURPLE}"
@@ -49,12 +59,12 @@ cmd_rebuild() {
     echo ""
 
     echo -e "${YELLOW}[1/6] Stopping containers...${NC}"
-    docker-compose down
+    $DOCKER_COMPOSE down
     echo -e "${GREEN}✓ Containers stopped${NC}"
     echo ""
 
     echo -e "${YELLOW}[2/6] Removing old containers...${NC}"
-    docker-compose rm -f || true
+    $DOCKER_COMPOSE rm -f || true
     echo -e "${GREEN}✓ Old containers removed${NC}"
     echo ""
 
@@ -65,12 +75,12 @@ cmd_rebuild() {
     echo ""
 
     echo -e "${YELLOW}[4/6] Building Docker images...${NC}"
-    docker-compose build
+    $DOCKER_COMPOSE build
     echo -e "${GREEN}✓ Docker images built${NC}"
     echo ""
 
     echo -e "${YELLOW}[5/6] Starting containers...${NC}"
-    docker-compose up -d
+    $DOCKER_COMPOSE up -d
     echo -e "${GREEN}✓ Containers started${NC}"
     echo ""
 
@@ -78,7 +88,7 @@ cmd_rebuild() {
     sleep 5
     echo ""
 
-    docker-compose ps
+    $DOCKER_COMPOSE ps
     echo ""
 
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -98,10 +108,10 @@ cmd_restart() {
     echo ""
 
     echo -e "${YELLOW}Restarting containers...${NC}"
-    docker-compose restart
+    $DOCKER_COMPOSE restart
     echo ""
 
-    docker-compose ps
+    $DOCKER_COMPOSE ps
     echo ""
 
     echo -e "${GREEN}✓ Restart complete!${NC}"
@@ -113,7 +123,7 @@ cmd_logs() {
     banner
     echo -e "${CYAN}Showing logs for all services (Ctrl+C to exit)...${NC}"
     echo ""
-    docker-compose logs -f --tail=100
+    $DOCKER_COMPOSE logs -f --tail=100
 }
 
 # Show status
@@ -124,7 +134,7 @@ cmd_status() {
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    docker-compose ps
+    $DOCKER_COMPOSE ps
     echo ""
 
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -132,7 +142,7 @@ cmd_status() {
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
 
-    docker stats --no-stream $(docker-compose ps -q)
+    docker stats --no-stream $($DOCKER_COMPOSE ps -q)
     echo ""
 }
 
@@ -144,10 +154,10 @@ show_info() {
     echo -e "  Quick restart:        ${YELLOW}./scripts/deploy.sh restart${NC}"
     echo ""
     echo -e "${CYAN}Individual service logs:${NC}"
-    echo -e "  API Gateway:          ${YELLOW}docker-compose logs -f api-gateway${NC}"
-    echo -e "  VPN Node:             ${YELLOW}docker-compose logs -f vpn-node${NC}"
-    echo -e "  PostgreSQL:           ${YELLOW}docker-compose logs -f postgres${NC}"
-    echo -e "  Redis:                ${YELLOW}docker-compose logs -f redis${NC}"
+    echo -e "  API Gateway:          ${YELLOW}docker-compose -f deployments/docker/docker-compose.yml logs -f api-gateway${NC}"
+    echo -e "  VPN Node:             ${YELLOW}docker-compose -f deployments/docker/docker-compose.yml logs -f vpn-node${NC}"
+    echo -e "  PostgreSQL:           ${YELLOW}docker-compose -f deployments/docker/docker-compose.yml logs -f postgres${NC}"
+    echo -e "  Redis:                ${YELLOW}docker-compose -f deployments/docker/docker-compose.yml logs -f redis${NC}"
     echo ""
     echo -e "${CYAN}API Endpoints:${NC}"
     echo -e "  Health:               ${YELLOW}http://localhost:8080/health${NC}"
