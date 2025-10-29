@@ -54,6 +54,9 @@ services:
       REDIS_PORT: "6379"
     ports:
       - "8080:8080"
+    volumes:
+      - /opt/aureo-vpn:/opt/aureo-vpn:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
         condition: service_healthy

@@ -46,6 +46,7 @@ type VPNNode struct {
 	WireGuardPort     int    `gorm:"default:51820" json:"wireguard_port"`
 	OpenVPNPort       int    `gorm:"default:1194" json:"openvpn_port"`
 	PublicKey         string `json:"public_key"` // WireGuard public key
+	PrivateKeyEncrypted string `json:"-"` // WireGuard private key (encrypted in production)
 
 	// Features
 	SupportsMultiHop   bool `gorm:"default:false" json:"supports_multihop"`

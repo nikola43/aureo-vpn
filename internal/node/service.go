@@ -64,6 +64,7 @@ func (s *Service) Start() error {
 	}
 
 	// Generate server keypair if not exists
+	var privateKey string
 	if node.PublicKey == "" {
 		keyPair, err := wireguard.GenerateKeyPair()
 		if err != nil {
@@ -71,16 +72,39 @@ func (s *Service) Start() error {
 		}
 
 		node.PublicKey = keyPair.PublicKey
+		privateKey = keyPair.PrivateKey
 		// Store private key securely (in production, use KMS/Vault)
+		// For now, store in PrivateKeyEncrypted field
 		if err := s.db.Model(&node).Updates(map[string]interface{}{
-			"public_key": keyPair.PublicKey,
+			"public_key":            keyPair.PublicKey,
+			"private_key_encrypted": keyPair.PrivateKey,
 		}).Error; err != nil {
-			return fmt.Errorf("failed to save public key: %w", err)
+			return fmt.Errorf("failed to save keypair: %w", err)
+		}
+	} else {
+		// Load existing private key from database
+		var storedNode models.VPNNode
+		if err := s.db.Select("private_key_encrypted").First(&storedNode, s.nodeID).Error; err != nil {
+			return fmt.Errorf("failed to load private key: %w", err)
+		}
+		privateKey = storedNode.PrivateKeyEncrypted
+
+		// If no private key exists, generate a new one
+		if privateKey == "" {
+			keyPair, err := wireguard.GenerateKeyPair()
+			if err != nil {
+				return fmt.Errorf("failed to generate keypair: %w", err)
+			}
+			privateKey = keyPair.PrivateKey
+
+			if err := s.db.Model(&node).UpdateColumn("private_key_encrypted", privateKey).Error; err != nil {
+				return fmt.Errorf("failed to save private key: %w", err)
+			}
 		}
 	}
 
 	// Setup WireGuard interface
-	if err := s.setupWireGuard(&node); err != nil {
+	if err := s.setupWireGuard(&node, privateKey); err != nil {
 		return fmt.Errorf("failed to setup WireGuard: %w", err)
 	}
 
@@ -110,10 +134,7 @@ func (s *Service) Stop() error {
 }
 
 // setupWireGuard configures the WireGuard interface
-func (s *Service) setupWireGuard(node *models.VPNNode) error {
-	// This is a simplified setup - in production, retrieve private key from secure storage
-	privateKey := "PLACEHOLDER_PRIVATE_KEY" // TODO: Retrieve from KMS/Vault
-
+func (s *Service) setupWireGuard(node *models.VPNNode, privateKey string) error {
 	config := wireguard.ServerConfig{
 		PrivateKey: privateKey,
 		Address:    node.InternalIP + "/24",
