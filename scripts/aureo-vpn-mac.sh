@@ -153,7 +153,7 @@ cmd_list() {
     echo -e "${CYAN}Available VPN Nodes:${NC}"
     echo ""
 
-    RESPONSE=$(curl -s -X GET "$API_URL/vpn/nodes" \
+    RESPONSE=$(curl -s -X GET "$API_URL/nodes" \
         -H "Authorization: Bearer $TOKEN")
 
     if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
@@ -185,7 +185,7 @@ cmd_connect() {
     echo -e "${CYAN}Fetching available nodes...${NC}"
     echo ""
 
-    RESPONSE=$(curl -s -X GET "$API_URL/vpn/nodes" \
+    RESPONSE=$(curl -s -X GET "$API_URL/nodes" \
         -H "Authorization: Bearer $TOKEN")
 
     # Check for errors
