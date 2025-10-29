@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -298,14 +300,34 @@ func (s *Service) heartbeatLoop() {
 }
 
 func (s *Service) sendHeartbeat() {
+	// Count active WireGuard peers
+	peerCount := s.countActivePeers()
+
 	updates := map[string]interface{}{
-		"last_heartbeat": time.Now(),
-		"status":         "online",
+		"last_heartbeat":      time.Now(),
+		"status":              "online",
+		"current_connections": peerCount,
 	}
 
 	if err := s.db.Model(&models.VPNNode{}).Where("id = ?", s.nodeID).Updates(updates).Error; err != nil {
 		log.Printf("Failed to send heartbeat: %v", err)
 	}
+}
+
+// countActivePeers counts the number of active WireGuard peers
+func (s *Service) countActivePeers() int {
+	cmd := exec.Command("wg", "show", "wg0", "peers")
+	output, err := cmd.Output()
+	if err != nil {
+		return 0
+	}
+
+	// Count non-empty lines (each line is a peer public key)
+	peers := strings.Split(strings.TrimSpace(string(output)), "\n")
+	if len(peers) == 1 && peers[0] == "" {
+		return 0
+	}
+	return len(peers)
 }
 
 // sessionMonitor monitors active sessions

@@ -15,6 +15,13 @@ export const Dashboard: React.FC = () => {
 
   useEffect(() => {
     loadDashboard();
+
+    // Auto-refresh dashboard every 5 seconds for real-time updates
+    const interval = setInterval(() => {
+      loadDashboard();
+    }, 5000);
+
+    return () => clearInterval(interval);
   }, []);
 
   const loadDashboard = async () => {
@@ -203,7 +210,7 @@ export const Dashboard: React.FC = () => {
                   <div>
                     <p className="text-sm font-medium text-white/80">Pending Payout</p>
                     <p className="text-3xl font-bold text-white mt-2">
-                      ${(stats.pending_payout || 0).toFixed(2)}
+                      ${(stats.pending_payout || 0).toFixed(4)}
                     </p>
                     <button
                       onClick={handleRequestPayout}
