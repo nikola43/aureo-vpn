@@ -493,6 +493,17 @@ func (rs *RewardService) GetOperatorStats(ctx context.Context, operatorID uuid.U
 	// Get current tier
 	tier, _ := operator.GetEligibleTier(rs.db)
 
+	// Get connected users and current traffic from all operator nodes
+	var nodes []models.VPNNode
+	rs.db.Where("operator_id = ? AND status = ?", operatorID, "online").Find(&nodes)
+
+	var totalConnectedUsers int
+	var totalCurrentTrafficMbps float64
+	for _, node := range nodes {
+		totalConnectedUsers += node.CurrentConnections
+		totalCurrentTrafficMbps += node.BandwidthUsageGbps * 1000.0 // Convert Gbps to Mbps
+	}
+
 	stats := map[string]interface{}{
 		"operator_id":       operator.ID,
 		"total_earned":      operator.TotalEarned,
@@ -506,6 +517,8 @@ func (rs *RewardService) GetOperatorStats(ctx context.Context, operatorID uuid.U
 		"average_uptime":    operator.AverageUptime,
 		"current_tier":      tier.TierName,
 		"rate_per_gb":       tier.BaseRatePerGB * tier.BonusMultiplier,
+		"connected_users":   totalConnectedUsers,
+		"current_traffic":   totalCurrentTrafficMbps,
 	}
 
 	return stats, nil

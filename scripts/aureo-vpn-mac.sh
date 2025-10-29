@@ -27,7 +27,7 @@ NC='\033[0m'
 
 # Configuration
 API_URL="${API_URL:-http://155.138.238.145:8080/api/v1}"
-CONFIG_DIR="/tmp/.aureo-vpn-$USER"
+CONFIG_DIR="$HOME/.aureo-vpn"
 SESSION_FILE="$CONFIG_DIR/.session"
 CONNECTION_FILE="$CONFIG_DIR/.connection"
 WG_CONFIG="$CONFIG_DIR/wg0.conf"
@@ -104,13 +104,45 @@ cmd_logout() {
     fi
 }
 
-# Load session
+# Validate token
+validate_token() {
+    if [ -z "$TOKEN" ]; then
+        return 1
+    fi
+
+    # Test token by making a simple API call
+    RESPONSE=$(curl -s -X GET "$API_URL/operator/nodes" \
+        -H "Authorization: Bearer $TOKEN")
+
+    # Check if we got an error response
+    if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
+        ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error')
+        # Check for authentication/authorization errors
+        if [[ "$ERROR_MSG" == *"nauthorized"* ]] || [[ "$ERROR_MSG" == *"expired"* ]] || [[ "$ERROR_MSG" == *"invalid"* ]]; then
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
+# Load session and validate token
 load_session() {
     if [ ! -f "$SESSION_FILE" ]; then
-        echo -e "${YELLOW}Not logged in. Please run: $0 login${NC}"
-        exit 1
+        echo -e "${YELLOW}Not logged in.${NC}"
+        echo ""
+        cmd_login
+        return
     fi
+
     source "$SESSION_FILE"
+
+    # Validate the token
+    if ! validate_token; then
+        echo -e "${YELLOW}Session expired. Please login again.${NC}"
+        echo ""
+        cmd_login
+    fi
 }
 
 # List nodes
@@ -126,11 +158,7 @@ cmd_list() {
 
     if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
         ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error')
-        if [[ "$ERROR_MSG" == *"expired"* ]] || [[ "$ERROR_MSG" == *"invalid"* ]]; then
-            echo -e "${RED}✗ Session expired. Please login again: $0 login${NC}"
-        else
-            echo -e "${RED}✗ Failed to fetch nodes: $ERROR_MSG${NC}"
-        fi
+        echo -e "${RED}✗ Failed to fetch nodes: $ERROR_MSG${NC}"
         exit 1
     fi
 
@@ -160,14 +188,10 @@ cmd_connect() {
     RESPONSE=$(curl -s -X GET "$API_URL/operator/nodes" \
         -H "Authorization: Bearer $TOKEN")
 
-    # Check for authentication errors
+    # Check for errors
     if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
         ERROR_MSG=$(echo "$RESPONSE" | jq -r '.error')
-        if [[ "$ERROR_MSG" == *"expired"* ]] || [[ "$ERROR_MSG" == *"invalid"* ]]; then
-            echo -e "${RED}✗ Session expired. Please login again: $0 login${NC}"
-        else
-            echo -e "${RED}✗ Failed to fetch nodes: $ERROR_MSG${NC}"
-        fi
+        echo -e "${RED}✗ Failed to fetch nodes: $ERROR_MSG${NC}"
         exit 1
     fi
 

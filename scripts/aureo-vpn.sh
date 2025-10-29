@@ -123,6 +123,7 @@ cmd_list() {
 
     RESPONSE=$(curl -s -X GET "$API_URL/operator/nodes" \
         -H "Authorization: Bearer $TOKEN")
+    echo "$RESPONSE"
 
     if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
         echo -e "${RED}✗ Failed to fetch nodes${NC}"

@@ -24,6 +24,12 @@ type Service struct {
 	mu             sync.RWMutex
 	ctx            context.Context
 	cancel         context.CancelFunc
+
+	// Traffic monitoring
+	lastBytesSent     int64
+	lastBytesReceived int64
+	lastTrafficCheck  time.Time
+	trafficMu         sync.RWMutex
 }
 
 // SessionInfo holds session information
@@ -82,6 +88,7 @@ func (s *Service) Start() error {
 	go s.heartbeatLoop()
 	go s.sessionMonitor()
 	go s.metricsCollector()
+	go s.trafficMonitor()
 
 	log.Println("VPN Node Service started successfully")
 	return nil
@@ -344,4 +351,84 @@ func (s *Service) collectMetrics() {
 	metrics.NodeCPUUsage.WithLabelValues(node.Name).Set(node.CPUUsage)
 	metrics.NodeMemoryUsage.WithLabelValues(node.Name).Set(node.MemoryUsage)
 	metrics.NodeBandwidth.WithLabelValues(node.Name).Set(node.BandwidthUsageGbps)
+}
+
+// trafficMonitor monitors WireGuard traffic and calculates real-time bandwidth usage
+func (s *Service) trafficMonitor() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	// Initialize last check time
+	s.trafficMu.Lock()
+	s.lastTrafficCheck = time.Now()
+	s.trafficMu.Unlock()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.updateTrafficStats()
+		}
+	}
+}
+
+func (s *Service) updateTrafficStats() {
+	// Get WireGuard stats
+	stats, err := s.wgManager.GetInterfaceStats()
+	if err != nil {
+		log.Printf("Failed to get WireGuard stats: %v", err)
+		return
+	}
+
+	// Calculate total bytes from all peers
+	var totalBytesSent, totalBytesReceived int64
+	for _, peer := range stats.Peers {
+		totalBytesSent += peer.BytesSent
+		totalBytesReceived += peer.BytesReceived
+	}
+
+	s.trafficMu.Lock()
+	now := time.Now()
+	timeDiff := now.Sub(s.lastTrafficCheck).Seconds()
+
+	// Calculate rate (bytes per second)
+	var currentTrafficMbps float64
+	if timeDiff > 0 && s.lastTrafficCheck.Unix() > 0 {
+		bytesSentDiff := totalBytesSent - s.lastBytesSent
+		bytesReceivedDiff := totalBytesReceived - s.lastBytesReceived
+
+		// Total bytes per second (sent + received)
+		bytesPerSecond := float64(bytesSentDiff+bytesReceivedDiff) / timeDiff
+
+		// Convert to Mbps (megabits per second)
+		currentTrafficMbps = (bytesPerSecond * 8) / 1_000_000
+	}
+
+	// Update tracking variables
+	s.lastBytesSent = totalBytesSent
+	s.lastBytesReceived = totalBytesReceived
+	s.lastTrafficCheck = now
+	s.trafficMu.Unlock()
+
+	// Update node's bandwidth usage in database
+	s.db.Model(&models.VPNNode{}).
+		Where("id = ?", s.nodeID).
+		UpdateColumn("bandwidth_usage_gbps", currentTrafficMbps/1000.0) // Convert Mbps to Gbps
+}
+
+// GetConnectedUsers returns the number of currently connected users
+func (s *Service) GetConnectedUsers() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.activeSessions)
+}
+
+// GetCurrentTrafficMbps returns the current traffic rate in Mbps
+func (s *Service) GetCurrentTrafficMbps() float64 {
+	var node models.VPNNode
+	if err := s.db.First(&node, s.nodeID).Error; err != nil {
+		return 0
+	}
+	return node.BandwidthUsageGbps * 1000.0 // Convert Gbps to Mbps
 }
