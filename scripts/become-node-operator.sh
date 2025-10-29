@@ -392,9 +392,9 @@ register_node() {
         echo -e "${GREEN}✓ VPN node registered in database${NC}"
         echo -e "${BLUE}  Node ID: $NODE_ID${NC}"
 
-        # Set node status to online
+        # Set internal_ip, status to online, and update heartbeat
         docker exec aureo-vpn-db psql -U postgres -d aureo_vpn -c \
-            "UPDATE vpn_nodes SET status='online', last_heartbeat=NOW() WHERE id='$NODE_ID';" \
+            "UPDATE vpn_nodes SET internal_ip='$INTERNAL_IP', status='online', last_heartbeat=NOW() WHERE id='$NODE_ID';" \
             >/dev/null 2>&1
 
         # Recalculate operator stats
