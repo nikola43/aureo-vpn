@@ -1,6 +1,7 @@
 import axios, { AxiosInstance } from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
+// Use relative URL when in production (Docker), absolute URL for local development
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
 
 class ApiService {
   private api: AxiosInstance;

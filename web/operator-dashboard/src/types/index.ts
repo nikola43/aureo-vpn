@@ -32,6 +32,8 @@ export interface VPNNode {
   is_active: boolean;
   uptime_percentage: number;
   total_earned_usd: number;
+  bandwidth_usage_gbps?: number;
+  current_connections?: number;
   created_at: string;
 }
 

@@ -95,7 +95,7 @@ export const Dashboard: React.FC = () => {
     );
   }
 
-  const { stats, operator, active_nodes, recent_earnings, recent_payouts } = data;
+  const { stats, active_nodes, recent_earnings, recent_payouts } = data;
 
   // Calculate current traffic in MB/s from all active nodes
   const currentTrafficMB = active_nodes.reduce((total, node) => {

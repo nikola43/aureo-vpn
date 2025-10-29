@@ -68,23 +68,17 @@ cmd_rebuild() {
     echo -e "${GREEN}✓ Old containers removed${NC}"
     echo ""
 
-    echo -e "${YELLOW}[3/6] Building Go binaries...${NC}"
-    go build -o bin/api-gateway ./cmd/api-gateway
-    go build -o bin/vpn-node ./cmd/vpn-node
-    echo -e "${GREEN}✓ Go binaries built${NC}"
-    echo ""
-
-    echo -e "${YELLOW}[4/6] Building Docker images...${NC}"
+    echo -e "${YELLOW}[3/5] Building Docker images...${NC}"
     $DOCKER_COMPOSE build
     echo -e "${GREEN}✓ Docker images built${NC}"
     echo ""
 
-    echo -e "${YELLOW}[5/6] Starting containers...${NC}"
+    echo -e "${YELLOW}[4/5] Starting containers...${NC}"
     $DOCKER_COMPOSE up -d
     echo -e "${GREEN}✓ Containers started${NC}"
     echo ""
 
-    echo -e "${YELLOW}[6/6] Waiting for services...${NC}"
+    echo -e "${YELLOW}[5/5] Waiting for services...${NC}"
     sleep 5
     echo ""
 
@@ -155,12 +149,16 @@ show_info() {
     echo ""
     echo -e "${CYAN}Individual service logs:${NC}"
     echo -e "  API Gateway:          ${YELLOW}docker-compose -f deployments/docker/docker-compose.yml logs -f api-gateway${NC}"
+    echo -e "  Dashboard:            ${YELLOW}docker-compose -f deployments/docker/docker-compose.yml logs -f dashboard${NC}"
     echo -e "  VPN Node:             ${YELLOW}docker-compose -f deployments/docker/docker-compose.yml logs -f vpn-node${NC}"
     echo -e "  PostgreSQL:           ${YELLOW}docker-compose -f deployments/docker/docker-compose.yml logs -f postgres${NC}"
     echo -e "  Redis:                ${YELLOW}docker-compose -f deployments/docker/docker-compose.yml logs -f redis${NC}"
     echo ""
-    echo -e "${CYAN}API Endpoints:${NC}"
-    echo -e "  Health:               ${YELLOW}http://localhost:8080/health${NC}"
+    echo -e "${CYAN}Service URLs:${NC}"
+    echo -e "  Dashboard:            ${YELLOW}http://localhost:3001${NC}"
+    echo -e "  Grafana:              ${YELLOW}http://localhost:3000${NC}"
+    echo -e "  Prometheus:           ${YELLOW}http://localhost:9090${NC}"
+    echo -e "  API Health:           ${YELLOW}http://localhost:8080/health${NC}"
     echo -e "  API Docs:             ${YELLOW}http://localhost:8080/api/v1${NC}"
     echo ""
 }

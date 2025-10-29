@@ -89,7 +89,6 @@ services:
       context: ../../
       dockerfile: deployments/docker/Dockerfile.vpn-node
     container_name: aureo-vpn-node-1
-    privileged: true
     environment:
       NODE_ID: "${NODE_ID_1}"
       DB_HOST: postgres

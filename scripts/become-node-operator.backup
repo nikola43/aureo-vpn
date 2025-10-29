@@ -203,17 +203,8 @@ install_docker() {
 create_docker_compose() {
     section "📝 Creating Docker Compose Configuration"
 
-    # Use the existing docker-compose location
-    DOCKER_DIR="$PROJECT_ROOT/deployments/docker"
-
-    # Create backup of existing docker-compose if it exists
-    if [ -f "$DOCKER_DIR/docker-compose.yml" ]; then
-        echo -e "${YELLOW}Backing up existing docker-compose.yml...${NC}"
-        cp "$DOCKER_DIR/docker-compose.yml" "$DOCKER_DIR/docker-compose.yml.backup.$(date +%s)"
-    fi
-
-    mkdir -p "$DOCKER_DIR"
-    cd "$DOCKER_DIR"
+    mkdir -p "$INSTALL_DIR"
+    cd "$INSTALL_DIR"
 
     # Generate JWT secret and DB password (hex to avoid special chars in .env)
     JWT_SECRET=$(openssl rand -hex 48)
@@ -227,65 +218,318 @@ DB_PASSWORD=$DB_PASSWORD
 EOF
     chmod 600 "$CONFIG_DIR/docker-secrets"
 
-    # Create/update .env file with empty NODE_ID (will be set later)
-    cat > "$DOCKER_DIR/.env" << EOF
-NODE_ID_1=
+    # Create .env file for Docker Compose
+    # Note: Don't quote values in .env - Docker Compose will use them literally
+    cat > "$INSTALL_DIR/.env" << EOF
+# Database
+DB_PASSWORD=$DB_PASSWORD
+
+# JWT
+JWT_SECRET=$JWT_SECRET
+
+# Ports
+API_PORT=8080
+POSTGRES_PORT=5432
+WIREGUARD_PORT=51820
+OPENVPN_PORT=1194
+DASHBOARD_PORT=3000
 EOF
 
-    # Update INSTALL_DIR to point to docker directory
-    INSTALL_DIR="$DOCKER_DIR"
+    # Create docker-compose.yml
+    cat > "$INSTALL_DIR/docker-compose.yml" << 'EOF'
+version: '3.8'
 
-    echo -e "${GREEN}✓ Using docker-compose at: $DOCKER_DIR${NC}"
-    echo -e "${BLUE}ℹ Using existing Dockerfiles and docker-compose.yml from: $PROJECT_ROOT/deployments/docker/${NC}"
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: aureo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aureo_vpn
+      POSTGRES_USER: aureo_user
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - aureo-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aureo_user -d aureo_vpn"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
-    # The docker-compose.yml already exists in the project, so we don't need to create it
-    # Just verify it exists
-    if [ ! -f "$INSTALL_DIR/docker-compose.yml" ]; then
-        echo -e "${RED}✗ docker-compose.yml not found at $INSTALL_DIR${NC}"
-        exit 1
-    fi
+  # API Gateway
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: aureo-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: aureo_user
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: aureo_vpn
+      DB_SSLMODE: disable
+      DB_TIMEZONE: UTC
+      DB_MAX_IDLE_CONNS: 10
+      DB_MAX_OPEN_CONNS: 100
+      DB_LOG_LEVEL: warn
+
+      # Server
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8080
+      SERVER_READ_TIMEOUT: 15s
+      SERVER_WRITE_TIMEOUT: 15s
+      SERVER_SHUTDOWN_TIMEOUT: 30s
+
+      # JWT
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_EXPIRY: 24h
+      JWT_REFRESH_EXPIRY: 168h
+
+      # Security
+      ARGON2_MEMORY: 65536
+      ARGON2_ITERATIONS: 3
+      ARGON2_PARALLELISM: 4
+      ARGON2_SALT_LENGTH: 16
+      ARGON2_KEY_LENGTH: 32
+
+      # Environment
+      ENVIRONMENT: production
+
+      # Logging
+      LOG_LEVEL: info
+      LOG_FORMAT: json
+
+      # CORS
+      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://localhost:8080,http://dashboard:3000
+      CORS_ALLOWED_METHODS: GET,POST,PUT,DELETE,OPTIONS
+      CORS_ALLOWED_HEADERS: Content-Type,Authorization
+      CORS_ALLOW_CREDENTIALS: "false"
+
+      # Rate Limiting
+      RATE_LIMIT_REQUESTS_PER_SECOND: 10
+      RATE_LIMIT_BURST: 20
+
+      # VPN
+      VPN_NETWORK: 10.8.0.0/24
+      WIREGUARD_PORT: 51820
+      OPENVPN_PORT: 1194
+    ports:
+      - "${API_PORT:-8080}:8080"
+    networks:
+      - aureo-network
+    volumes:
+      - api-logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # WireGuard VPN
+  wireguard:
+    image: linuxserver/wireguard:latest
+    container_name: aureo-wireguard
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      - SERVERPORT=${WIREGUARD_PORT:-51820}
+      - PEERS=10
+      - PEERDNS=auto
+      - INTERNAL_SUBNET=10.8.0.0/24
+    volumes:
+      - wireguard-config:/config
+    ports:
+      - "${WIREGUARD_PORT:-51820}:51820/udp"
+    networks:
+      - aureo-network
+    sysctls:
+      - net.ipv4.conf.all.src_valid_mark=1
+      - net.ipv4.ip_forward=1
+
+  # Dashboard
+  dashboard:
+    build:
+      context: ./web/operator-dashboard
+      dockerfile: Dockerfile
+    container_name: aureo-dashboard
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      VITE_API_URL: http://api:8080/api/v1
+    ports:
+      - "${DASHBOARD_PORT:-3000}:3000"
+    networks:
+      - aureo-network
+
+volumes:
+  postgres-data:
+    driver: local
+  wireguard-config:
+    driver: local
+  api-logs:
+    driver: local
+
+networks:
+  aureo-network:
+    driver: bridge
+EOF
+
+    echo -e "${GREEN}✓ Docker Compose configuration created${NC}"
+}
+
+# Create Dockerfile for API
+create_api_dockerfile() {
+    cat > "$INSTALL_DIR/Dockerfile.api" << 'EOF'
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /build
+
+# Install dependencies
+RUN apk add --no-cache git
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build
+WORKDIR /build/cmd/api-gateway
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o aureo-api-gateway .
+
+# Final stage
+FROM alpine:latest
+
+RUN apk --no-cache add ca-certificates curl
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /build/cmd/api-gateway/aureo-api-gateway .
+
+# Expose port
+EXPOSE 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+# Run
+CMD ["./aureo-api-gateway"]
+EOF
+}
+
+# Create Dockerfile for Dashboard
+create_dashboard_dockerfile() {
+    mkdir -p "$INSTALL_DIR/web/operator-dashboard"
+
+    # Create .dockerignore to prevent copying node_modules
+    cat > "$INSTALL_DIR/web/operator-dashboard/.dockerignore" << 'EOF'
+node_modules
+dist
+.env
+.env.local
+*.log
+.DS_Store
+EOF
+
+    cat > "$INSTALL_DIR/web/operator-dashboard/Dockerfile" << 'EOF'
+FROM node:20-alpine AS builder
+
+WORKDIR /build
+
+# Copy package.json
+COPY package.json ./
+
+# Clean install dependencies
+RUN rm -rf node_modules && \
+    npm cache clean --force && \
+    npm install
+
+# Copy source code (node_modules excluded via .dockerignore)
+COPY . .
+
+# Build for production (skip tsc, just use vite)
+RUN npx vite build
+
+# Production stage with nginx
+FROM nginx:alpine
+
+# Copy built files
+COPY --from=builder /build/dist /usr/share/nginx/html
+
+# Create nginx config
+RUN echo 'server {' > /etc/nginx/conf.d/default.conf && \
+    echo '    listen 3000;' >> /etc/nginx/conf.d/default.conf && \
+    echo '    root /usr/share/nginx/html;' >> /etc/nginx/conf.d/default.conf && \
+    echo '    index index.html;' >> /etc/nginx/conf.d/default.conf && \
+    echo '    location / {' >> /etc/nginx/conf.d/default.conf && \
+    echo '        try_files $uri $uri/ /index.html;' >> /etc/nginx/conf.d/default.conf && \
+    echo '    }' >> /etc/nginx/conf.d/default.conf && \
+    echo '}' >> /etc/nginx/conf.d/default.conf
+
+EXPOSE 3000
+
+CMD ["nginx", "-g", "daemon off;"]
+EOF
+}
+
+# Copy project files for Docker
+copy_project_for_docker() {
+    echo "Copying project files..."
+
+    # Copy API files
+    cp -r "$PROJECT_ROOT/cmd" "$INSTALL_DIR/" 2>/dev/null || true
+    cp -r "$PROJECT_ROOT/internal" "$INSTALL_DIR/" 2>/dev/null || true
+    cp -r "$PROJECT_ROOT/pkg" "$INSTALL_DIR/" 2>/dev/null || true
+    cp "$PROJECT_ROOT/go.mod" "$INSTALL_DIR/" 2>/dev/null || true
+    cp "$PROJECT_ROOT/go.sum" "$INSTALL_DIR/" 2>/dev/null || true
+
+    # Copy dashboard files
+    mkdir -p "$INSTALL_DIR/web"
+    cp -r "$PROJECT_ROOT/web/operator-dashboard" "$INSTALL_DIR/web/" 2>/dev/null || true
+
+    echo -e "${GREEN}✓ Project files copied${NC}"
 }
 
 # Start Docker services
 start_docker_services() {
-    section "🚀 Building and Starting Docker Services"
+    section "🚀 Starting Docker Services"
 
     cd "$INSTALL_DIR"
 
-    echo -e "${YELLOW}[1/5] Stopping old containers...${NC}"
-    docker compose down 2>/dev/null || docker-compose down 2>/dev/null || true
-    echo -e "${GREEN}✓ Old containers stopped${NC}"
-    echo ""
+    echo "Building and starting containers..."
+    docker-compose up -d --build
 
-    echo -e "${YELLOW}[2/5] Removing old containers...${NC}"
-    docker compose rm -f 2>/dev/null || docker-compose rm -f 2>/dev/null || true
-    echo -e "${GREEN}✓ Old containers removed${NC}"
-    echo ""
-
-    echo -e "${YELLOW}[3/5] Building Docker images...${NC}"
-    docker compose build --no-cache 2>/dev/null || docker-compose build --no-cache
-    echo -e "${GREEN}✓ Docker images built${NC}"
-    echo ""
-
-    echo -e "${YELLOW}[4/5] Starting containers (without vpn-node-1 first)...${NC}"
-    docker compose up -d postgres redis api-gateway control-server prometheus grafana dashboard 2>/dev/null || docker-compose up -d postgres redis api-gateway control-server prometheus grafana dashboard
-    echo -e "${GREEN}✓ Core containers started${NC}"
-    echo ""
-
-    echo -e "${YELLOW}[5/5] Waiting for services to be ready...${NC}"
-    sleep 15
-    echo ""
+    echo "Waiting for services to be ready..."
+    sleep 10
 
     # Check service health
-    echo -e "${CYAN}Container Status:${NC}"
-    docker compose ps 2>/dev/null || docker-compose ps
-    echo ""
-
-    if docker ps | grep -q "aureo-vpn-api"; then
+    if docker-compose ps | grep -q "Up"; then
         echo -e "${GREEN}✓ Docker services started successfully${NC}"
+        docker-compose ps
     else
         echo -e "${RED}✗ Some services failed to start${NC}"
-        echo -e "${YELLOW}Check logs with: docker compose -f $INSTALL_DIR/docker-compose.yml logs${NC}"
+        docker-compose ps
         exit 1
     fi
 }
@@ -660,16 +904,13 @@ create_operator_account() {
     # Register user
     echo -e "${BLUE}Registering user account...${NC}"
 
-    # Use jq to properly escape JSON to handle special characters in password
-    JSON_PAYLOAD=$(jq -n \
-        --arg email "$EMAIL" \
-        --arg password "$PASSWORD" \
-        --arg username "$USERNAME" \
-        '{email: $email, password: $password, username: $username}')
-
-    REGISTER_RESPONSE=$(curl -s -X POST "$API_URL/api/v1/auth/register" \
+    REGISTER_RESPONSE=$(curl -sf -X POST "$API_URL/api/v1/auth/register" \
         -H "Content-Type: application/json" \
-        -d "$JSON_PAYLOAD")
+        -d "{
+            \"email\": \"$EMAIL\",
+            \"password\": \"$PASSWORD\",
+            \"username\": \"$USERNAME\"
+        }" || echo '{"error": "Connection failed"}')
 
     echo "Debug - Registration response: $REGISTER_RESPONSE"
 
@@ -678,36 +919,11 @@ create_operator_account() {
     if [ -n "$ACCESS_TOKEN" ] && [ "$ACCESS_TOKEN" != "null" ]; then
         echo -e "${GREEN}✓ User account created${NC}"
     else
-        # Check if user already exists
+        echo -e "${RED}✗ Failed to create user account${NC}"
         ERROR_MSG=$(echo "$REGISTER_RESPONSE" | jq -r '.error // .message // "Unknown error"' 2>/dev/null)
-        if [[ "$ERROR_MSG" == *"already exists"* ]]; then
-            echo -e "${YELLOW}⚠ User already exists, attempting to login...${NC}"
-
-            # Try to login
-            LOGIN_PAYLOAD=$(jq -n \
-                --arg email "$EMAIL" \
-                --arg password "$PASSWORD" \
-                '{email: $email, password: $password}')
-
-            LOGIN_RESPONSE=$(curl -s -X POST "$API_URL/api/v1/auth/login" \
-                -H "Content-Type: application/json" \
-                -d "$LOGIN_PAYLOAD")
-
-            ACCESS_TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null)
-
-            if [ -n "$ACCESS_TOKEN" ] && [ "$ACCESS_TOKEN" != "null" ]; then
-                echo -e "${GREEN}✓ Logged in successfully${NC}"
-            else
-                echo -e "${RED}✗ Failed to login with existing account${NC}"
-                echo "Please check your credentials"
-                exit 1
-            fi
-        else
-            echo -e "${RED}✗ Failed to create user account${NC}"
-            echo "Error: $ERROR_MSG"
-            echo "Full response: $REGISTER_RESPONSE"
-            exit 1
-        fi
+        echo "Error: $ERROR_MSG"
+        echo "Full response: $REGISTER_RESPONSE"
+        exit 1
     fi
 
     # Setup crypto wallet
@@ -736,35 +952,29 @@ create_operator_account() {
     OPERATOR_RESPONSE=$(curl -s -X POST "$API_URL/api/v1/operator/register" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
-        -d "{\"wallet_address\":\"$WALLET_ADDRESS\",\"wallet_type\":\"$CRYPTO_TYPE\",\"country\":\"$COUNTRY\",\"email\":\"$EMAIL\"}")
+        -d "{
+            \"wallet_address\": \"$WALLET_ADDRESS\",
+            \"wallet_type\": \"$CRYPTO_TYPE\",
+            \"country\": \"$COUNTRY\",
+            \"email\": \"$EMAIL\"
+        }")
 
     if echo "$OPERATOR_RESPONSE" | jq -e '.operator' > /dev/null 2>&1; then
         echo -e "${GREEN}✓ Operator account created${NC}"
     else
-        # Check if operator already exists
-        ERROR_MSG=$(echo "$OPERATOR_RESPONSE" | jq -r '.error // "Unknown error"' 2>/dev/null)
-        if [[ "$ERROR_MSG" == *"conflict"* ]] || [[ "$ERROR_MSG" == *"already"* ]]; then
-            echo -e "${YELLOW}⚠ Operator account already exists${NC}"
-            echo -e "${GREEN}✓ Using existing operator account${NC}"
-        else
-            echo -e "${RED}✗ Failed to register as operator${NC}"
-            echo "Response: $OPERATOR_RESPONSE"
-            exit 1
-        fi
+        echo -e "${RED}✗ Failed to register as operator${NC}"
+        echo "Response: $OPERATOR_RESPONSE"
+        exit 1
     fi
 
     # Get fresh token with operator permissions
     echo -e "${CYAN}Getting fresh authorization token...${NC}"
-
-    # Use jq to properly escape JSON
-    LOGIN_PAYLOAD=$(jq -n \
-        --arg email "$EMAIL" \
-        --arg password "$PASSWORD" \
-        '{email: $email, password: $password}')
-
     LOGIN_RESPONSE=$(curl -s -X POST "$API_URL/api/v1/auth/login" \
         -H "Content-Type: application/json" \
-        -d "$LOGIN_PAYLOAD")
+        -d "{
+            \"email\": \"$EMAIL\",
+            \"password\": \"$PASSWORD\"
+        }")
 
     ACCESS_TOKEN=$(echo "$LOGIN_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null)
     if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
@@ -775,7 +985,7 @@ create_operator_account() {
 
     # Activate operator account (new operators are pending by default)
     echo -e "${CYAN}Activating operator account...${NC}"
-    docker exec aureo-vpn-db psql -U postgres -d aureo_vpn -c \
+    docker exec aureo-postgres psql -U aureo_user -d aureo_vpn -c \
         "UPDATE node_operators SET status='active', is_verified=true, verified_at=NOW() WHERE wallet_address='$WALLET_ADDRESS';" \
         > /dev/null 2>&1
 
@@ -829,7 +1039,18 @@ register_node() {
     NODE_RESPONSE=$(curl -s -X POST "$API_URL/api/v1/operator/nodes" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer $ACCESS_TOKEN" \
-        -d "{\"name\":\"$NODE_NAME\",\"hostname\":\"$HOSTNAME\",\"public_ip\":\"$PUBLIC_IP\",\"country\":\"$COUNTRY\",\"country_code\":\"$COUNTRY_CODE\",\"city\":\"$CITY\",\"wireguard_port\":51820,\"openvpn_port\":1194,\"latitude\":$LATITUDE,\"longitude\":$LONGITUDE}")
+        -d "{
+            \"name\": \"$NODE_NAME\",
+            \"hostname\": \"$HOSTNAME\",
+            \"public_ip\": \"$PUBLIC_IP\",
+            \"country\": \"$COUNTRY\",
+            \"country_code\": \"$COUNTRY_CODE\",
+            \"city\": \"$CITY\",
+            \"wireguard_port\": 51820,
+            \"openvpn_port\": 1194,
+            \"latitude\": $LATITUDE,
+            \"longitude\": $LONGITUDE
+        }")
 
     NODE_ID=$(echo "$NODE_RESPONSE" | jq -r '.node.id')
 
@@ -839,7 +1060,7 @@ register_node() {
 
         # Set node status to online (for development/testing - in production, nodes send heartbeats)
         echo -e "${CYAN}Activating node...${NC}"
-        docker exec aureo-vpn-db psql -U postgres -d aureo_vpn -c \
+        docker exec aureo-postgres psql -U aureo_user -d aureo_vpn -c \
             "UPDATE vpn_nodes SET status='online', last_heartbeat=NOW() WHERE id='$NODE_ID';" \
             > /dev/null 2>&1
 
@@ -847,30 +1068,23 @@ register_node() {
             echo -e "${GREEN}✓ Node activated and set to online${NC}"
 
             # Recalculate operator stats to reflect the new active node
-            docker exec aureo-vpn-db psql -U postgres -d aureo_vpn -c \
+            docker exec aureo-postgres psql -U aureo_user -d aureo_vpn -c \
                 "UPDATE node_operators SET active_nodes_count = (SELECT COUNT(*) FROM vpn_nodes WHERE operator_id = node_operators.id AND status = 'online' AND is_active = true);" \
                 > /dev/null 2>&1
 
             echo -e "${GREEN}✓ Operator stats updated${NC}"
 
-            # Update .env file with NODE_ID for vpn-node
-            echo -e "${CYAN}Updating VPN node configuration...${NC}"
-            cd "$PROJECT_ROOT/deployments/docker"
-            if [ -f .env ]; then
-                sed -i '/NODE_ID_1/d' .env
-            fi
-            echo "NODE_ID_1=$NODE_ID" >> .env
-            echo -e "${GREEN}✓ VPN node configuration updated${NC}"
-
-            # Start VPN node now that NODE_ID is configured
-            echo -e "${CYAN}Starting VPN node container...${NC}"
-            docker compose up -d vpn-node-1 2>/dev/null || docker-compose up -d vpn-node-1
-            sleep 5
-
-            if docker ps | grep -q "aureo-vpn-node-1"; then
-                echo -e "${GREEN}✓ VPN node container started${NC}"
-            else
-                echo -e "${YELLOW}⚠ VPN node may have issues. Check logs: docker logs aureo-vpn-node-1${NC}"
+            # Get WireGuard server public key and update node
+            echo -e "${CYAN}Configuring WireGuard...${NC}"
+            WG_PRIVATE_KEY=$(docker exec aureo-wireguard grep "PrivateKey" /config/wg_confs/wg0.conf 2>/dev/null | cut -d'=' -f2 | tr -d ' ')
+            if [ -n "$WG_PRIVATE_KEY" ]; then
+                WG_PUBLIC_KEY=$(echo "$WG_PRIVATE_KEY" | wg pubkey 2>/dev/null)
+                if [ -n "$WG_PUBLIC_KEY" ]; then
+                    docker exec aureo-postgres psql -U aureo_user -d aureo_vpn -c \
+                        "UPDATE vpn_nodes SET public_key='$WG_PUBLIC_KEY' WHERE id='$NODE_ID';" \
+                        > /dev/null 2>&1
+                    echo -e "${GREEN}✓ WireGuard public key configured${NC}"
+                fi
             fi
         else
             echo -e "${YELLOW}⚠ Could not auto-activate node (will show as offline until heartbeat)${NC}"
@@ -940,8 +1154,7 @@ print_summary() {
     echo -e "  ✓ PostgreSQL Database:  Running"
     echo -e "  ✓ API Gateway:          Running on http://localhost:8080"
     echo -e "  ✓ WireGuard VPN:        Running on port 51820"
-    echo -e "  ✓ Web Dashboard:        Running on http://localhost:3001"
-    echo -e "  ✓ Grafana:              Running on http://localhost:3000"
+    echo -e "  ✓ Web Dashboard:        Running on http://localhost:3000"
     echo -e "  ✓ Node Status:          Registered and Active"
     echo ""
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -964,7 +1177,7 @@ print_summary() {
         echo -e "  ${GREEN}🌐 Dashboard is already running!${NC}"
         echo ""
         echo -e "  Open your browser and visit:"
-        echo -e "     ${GREEN}http://localhost:3001${NC}"
+        echo -e "     ${GREEN}http://localhost:3000${NC}"
         echo ""
         echo -e "  Login with:"
         echo -e "     ${GREEN}Email: $EMAIL${NC}"
@@ -990,18 +1203,17 @@ print_summary() {
 
     if [ "$INSTALL_METHOD" = "docker" ]; then
         echo -e "  ${BLUE}Docker Commands:${NC}"
-        echo -e "  View all containers:    ${GREEN}cd $INSTALL_DIR && docker-compose ps${NC}"
-        echo -e "  View logs (all):        ${GREEN}cd $INSTALL_DIR && docker-compose logs -f${NC}"
-        echo -e "  View API logs:          ${GREEN}cd $INSTALL_DIR && docker-compose logs -f api-gateway${NC}"
-        echo -e "  View Dashboard logs:    ${GREEN}cd $INSTALL_DIR && docker-compose logs -f dashboard${NC}"
-        echo -e "  View DB logs:           ${GREEN}cd $INSTALL_DIR && docker-compose logs -f postgres${NC}"
+        echo -e "  View all containers:    ${GREEN}docker-compose -f $INSTALL_DIR/docker-compose.yml ps${NC}"
+        echo -e "  View logs (all):        ${GREEN}docker-compose -f $INSTALL_DIR/docker-compose.yml logs -f${NC}"
+        echo -e "  View API logs:          ${GREEN}docker-compose -f $INSTALL_DIR/docker-compose.yml logs -f api${NC}"
+        echo -e "  View Dashboard logs:    ${GREEN}docker-compose -f $INSTALL_DIR/docker-compose.yml logs -f dashboard${NC}"
+        echo -e "  View DB logs:           ${GREEN}docker-compose -f $INSTALL_DIR/docker-compose.yml logs -f postgres${NC}"
         echo ""
-        echo -e "  Rebuild & restart:      ${GREEN}cd $PROJECT_ROOT && ./scripts/deploy.sh rebuild${NC}"
-        echo -e "  Quick restart:          ${GREEN}cd $PROJECT_ROOT && ./scripts/deploy.sh restart${NC}"
-        echo -e "  Stop all services:      ${GREEN}cd $INSTALL_DIR && docker-compose down${NC}"
-        echo -e "  Start all services:     ${GREEN}cd $INSTALL_DIR && docker-compose up -d${NC}"
+        echo -e "  Restart all services:   ${GREEN}docker-compose -f $INSTALL_DIR/docker-compose.yml restart${NC}"
+        echo -e "  Stop all services:      ${GREEN}docker-compose -f $INSTALL_DIR/docker-compose.yml down${NC}"
+        echo -e "  Start all services:     ${GREEN}docker-compose -f $INSTALL_DIR/docker-compose.yml up -d${NC}"
         echo ""
-        echo -e "  Access database:        ${GREEN}docker exec -it aureo-vpn-db psql -U postgres -d aureo_vpn${NC}"
+        echo -e "  Access database:        ${GREEN}docker exec -it aureo-postgres psql -U aureo_user -d aureo_vpn${NC}"
     else
         echo -e "  ${BLUE}System Commands:${NC}"
         echo -e "  Check API status:       ${GREEN}sudo systemctl status aureo-api${NC}"
@@ -1055,33 +1267,16 @@ print_summary() {
 
 main() {
     print_header
-
-    # Choose installation method first
-    choose_installation_method
-
-    # Only check root if needed for the installation method
     check_root
 
-    # Clean up any existing installation
-    section "🧹 Cleaning Up Previous Installation"
+    docker stop aureo-api aureo-postgres aureo-dashboard aureo-wireguard 2>/dev/null
+    docker rm aureo-api aureo-postgres aureo-dashboard aureo-wireguard 2>/dev/null
+    docker volume rm aureo-vpn_postgres-data aureo-vpn_api-logs aureo-vpn_wireguard-config 2>/dev/null
+    docker network rm aureo-vpn_aureo-network 2>/dev/null
+    sudo rm -rf /opt/aureo-vpn
 
-    echo -e "${YELLOW}Removing old containers...${NC}"
-    docker stop aureo-vpn-api aureo-vpn-db aureo-vpn-dashboard aureo-vpn-control aureo-vpn-node-1 aureo-vpn-redis aureo-vpn-prometheus aureo-vpn-grafana 2>/dev/null || true
-    docker rm aureo-vpn-api aureo-vpn-db aureo-vpn-dashboard aureo-vpn-control aureo-vpn-node-1 aureo-vpn-redis aureo-vpn-prometheus aureo-vpn-grafana 2>/dev/null || true
-
-    echo -e "${YELLOW}Removing old volumes...${NC}"
-    docker volume rm docker_postgres_data docker_prometheus_data docker_grafana_data 2>/dev/null || true
-
-    echo -e "${YELLOW}Removing old network...${NC}"
-    docker network rm docker_aureo-network 2>/dev/null || true
-
-    echo -e "${YELLOW}Removing old installation directory...${NC}"
-    sudo rm -rf /opt/aureo-vpn 2>/dev/null || true
-
-    echo -e "${YELLOW}Removing old config directory...${NC}"
-    rm -rf "$HOME/.aureo-vpn" 2>/dev/null || true
-
-    echo -e "${GREEN}✓ Cleanup completed${NC}"
+    # Choose installation method
+    choose_installation_method
 
     echo ""
     echo -e "${YELLOW}This script will perform a complete setup:${NC}"
@@ -1108,10 +1303,14 @@ main() {
         detect_os
         install_docker
         create_docker_compose
+        create_api_dockerfile
+        create_dashboard_dockerfile
+        copy_project_for_docker
         start_docker_services
         sleep 5  # Wait for services to stabilize
         create_operator_account
         register_node
+        setup_dashboard
     else
         # System installation path
         detect_os
