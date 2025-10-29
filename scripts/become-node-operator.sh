@@ -78,6 +78,18 @@ command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
+# Detect Docker Compose command
+detect_docker_compose() {
+    if docker compose version >/dev/null 2>&1; then
+        DOCKER_COMPOSE="docker compose"
+    elif command_exists docker-compose; then
+        DOCKER_COMPOSE="docker-compose"
+    else
+        return 1
+    fi
+    return 0
+}
+
 # Check prerequisites
 check_prerequisites() {
     section "🔍 Checking Prerequisites"
@@ -91,11 +103,11 @@ check_prerequisites() {
     echo -e "${GREEN}✓ Docker installed${NC}"
 
     # Check Docker Compose
-    if ! docker compose version >/dev/null 2>&1 && ! command_exists docker-compose; then
+    if ! detect_docker_compose; then
         echo -e "${RED}✗ Docker Compose is not installed${NC}"
         exit 1
     fi
-    echo -e "${GREEN}✓ Docker Compose installed${NC}"
+    echo -e "${GREEN}✓ Docker Compose installed ($DOCKER_COMPOSE)${NC}"
 
     # Check Docker is running
     if ! docker ps >/dev/null 2>&1; then
@@ -123,18 +135,18 @@ deploy_services() {
     echo -e "${YELLOW}Building and starting containers...${NC}"
 
     # Stop any existing containers
-    docker compose -f "$DOCKER_COMPOSE_FILE" down 2>/dev/null || true
+    $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" down 2>/dev/null || true
 
     # Build and start services
-    docker compose -f "$DOCKER_COMPOSE_FILE" up -d --build
+    $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" up -d --build
 
     echo -e "${YELLOW}Waiting for services to be ready...${NC}"
     sleep 10
 
     # Check services are running
-    if ! docker compose -f "$DOCKER_COMPOSE_FILE" ps | grep -q "Up"; then
+    if ! $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" ps | grep -q "Up"; then
         echo -e "${RED}✗ Services failed to start${NC}"
-        echo -e "${YELLOW}Check logs with: docker compose -f $DOCKER_COMPOSE_FILE logs${NC}"
+        echo -e "${YELLOW}Check logs with: $DOCKER_COMPOSE -f $DOCKER_COMPOSE_FILE logs${NC}"
         exit 1
     fi
 
@@ -307,7 +319,7 @@ register_node() {
         echo "NODE_ID_1=$NODE_ID_1" >> "$PROJECT_ROOT/deployments/docker/.env"
 
         # Restart vpn-node container with new NODE_ID
-        docker compose -f "$DOCKER_COMPOSE_FILE" restart vpn-node-1
+        $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" restart vpn-node-1
         sleep 5
     fi
 
@@ -433,9 +445,9 @@ print_summary() {
     echo -e "${CYAN}  USEFUL COMMANDS${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
-    echo -e "  View all containers:    ${GREEN}docker compose -f $DOCKER_COMPOSE_FILE ps${NC}"
-    echo -e "  View logs (all):        ${GREEN}docker compose -f $DOCKER_COMPOSE_FILE logs -f${NC}"
-    echo -e "  View VPN node logs:     ${GREEN}docker compose -f $DOCKER_COMPOSE_FILE logs -f vpn-node-1${NC}"
+    echo -e "  View all containers:    ${GREEN}$DOCKER_COMPOSE -f $DOCKER_COMPOSE_FILE ps${NC}"
+    echo -e "  View logs (all):        ${GREEN}$DOCKER_COMPOSE -f $DOCKER_COMPOSE_FILE logs -f${NC}"
+    echo -e "  View VPN node logs:     ${GREEN}$DOCKER_COMPOSE -f $DOCKER_COMPOSE_FILE logs -f vpn-node-1${NC}"
     echo -e "  Check WireGuard:        ${GREEN}docker exec aureo-vpn-node-1 wg show wg0${NC}"
     echo -e "  Restart services:       ${GREEN}./scripts/deploy.sh restart${NC}"
     echo -e "  Rebuild after changes:  ${GREEN}./scripts/deploy.sh rebuild${NC}"
