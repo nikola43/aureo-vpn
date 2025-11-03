@@ -26,7 +26,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Configuration
-API_URL="${API_URL:-http://155.138.238.145:8080/api/v1}"
+API_URL="${API_URL:-http://155.138.238.145/api/v1}"
 CONFIG_DIR="$HOME/.aureo-vpn"
 SESSION_FILE="$CONFIG_DIR/.session"
 CONNECTION_FILE="$CONFIG_DIR/.connection"
@@ -70,7 +70,7 @@ cmd_login() {
 
     echo -e "${CYAN}Logging in...${NC}"
 
-    RESPONSE=$(curl -s -X POST "$API_URL/auth/login" \
+    RESPONSE=$(curl -s -X POST "$API_URL/api/v1/auth/login" \
         -H "Content-Type: application/json" \
         -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}")
 
@@ -185,7 +185,7 @@ cmd_connect() {
     echo -e "${CYAN}Fetching available nodes...${NC}"
     echo ""
 
-    RESPONSE=$(curl -s -X GET "$API_URL/nodes" \
+    RESPONSE=$(curl -s -X GET "$API_URL/api/v1/nodes" \
         -H "Authorization: Bearer $TOKEN")
 
     # Check for errors
@@ -245,7 +245,7 @@ cmd_connect() {
 
     # Register peer with API
     echo -e "${CYAN}Registering with VPN server...${NC}"
-    REGISTER_RESPONSE=$(curl -s -X POST "$API_URL/config/generate" \
+    REGISTER_RESPONSE=$(curl -s -X POST "$API_URL/api/v1/config/generate" \
         -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/json" \
         -d "{\"public_key\":\"$WG_PUBLIC\",\"node_id\":\"$NODE_ID\"}")
