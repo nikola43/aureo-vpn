@@ -240,15 +240,15 @@ func (v *VPNService) disconnectSessionLocked(sessionID uuid.UUID) error {
 	return nil
 }
 
+// allocateIP allocates an IP address. Must be called with v.mu held.
 func (v *VPNService) allocateIP() string {
 	// Simple IP allocation from 10.10.0.2 to 10.10.0.254
 	usedIPs := make(map[string]bool)
 
-	v.mu.RLock()
+	// Note: caller must hold the lock, so we don't lock here
 	for _, info := range v.sessions {
 		usedIPs[info.Session.TunnelIP] = true
 	}
-	v.mu.RUnlock()
 
 	for i := 2; i <= 254; i++ {
 		ip := fmt.Sprintf("10.10.0.%d", i)
