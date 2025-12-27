@@ -235,6 +235,62 @@ install_wireguard() {
     fi
 }
 
+# Install Docker
+install_docker() {
+    section "📦 Installing Docker"
+
+    echo -e "${YELLOW}Installing Docker...${NC}"
+
+    # Update package list
+    apt-get update -qq
+
+    # Install prerequisites
+    echo -e "${CYAN}Installing prerequisites...${NC}"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release
+
+    # Add Docker's official GPG key
+    echo -e "${CYAN}Adding Docker GPG key...${NC}"
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg 2>/dev/null || true
+    chmod a+r /etc/apt/keyrings/docker.gpg
+
+    # Set up the repository
+    echo -e "${CYAN}Adding Docker repository...${NC}"
+    echo \
+        "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+        $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+        tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # Update package list again
+    apt-get update -qq
+
+    # Install Docker
+    echo -e "${CYAN}Installing Docker Engine...${NC}"
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; then
+        echo -e "${GREEN}✓ Docker installed successfully${NC}"
+
+        # Start and enable Docker
+        systemctl start docker
+        systemctl enable docker
+
+        echo -e "${GREEN}✓ Docker service started${NC}"
+
+        # Verify installation
+        if docker --version >/dev/null 2>&1; then
+            echo -e "${GREEN}✓ Docker version: $(docker --version)${NC}"
+        fi
+
+        return 0
+    else
+        echo -e "${RED}✗ Docker installation failed${NC}"
+        return 1
+    fi
+}
+
 # Install all system dependencies
 install_all_dependencies() {
     section "📦 Installing All Dependencies"
@@ -518,26 +574,65 @@ select_deployment_mode() {
 
 # Check prerequisites for Docker mode
 check_docker_prerequisites() {
+    local docker_installed=true
+
     # Check Docker
     if ! command_exists docker; then
         echo -e "${RED}✗ Docker is not installed${NC}"
-        echo -e "${YELLOW}Please install Docker first: https://docs.docker.com/get-docker/${NC}"
-        exit 1
+        docker_installed=false
+    else
+        echo -e "${GREEN}✓ Docker installed${NC}"
     fi
-    echo -e "${GREEN}✓ Docker installed${NC}"
+
+    # If Docker is not installed, offer to install it
+    if [ "$docker_installed" = false ]; then
+        echo ""
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo -e "${YELLOW}  Docker Not Found${NC}"
+        echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+        echo ""
+        echo -e "${CYAN}Docker is required for the Docker deployment mode.${NC}"
+        echo -e "${CYAN}Would you like to automatically install Docker?${NC}"
+        echo ""
+        read -p "Install Docker now? (y/n): " INSTALL_DOCKER
+
+        if [[ $INSTALL_DOCKER =~ ^[Yy]$ ]]; then
+            install_docker
+            if ! command_exists docker; then
+                echo -e "${RED}✗ Docker installation failed${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${RED}Cannot proceed without Docker${NC}"
+            echo ""
+            echo -e "${CYAN}Manual installation:${NC}"
+            echo -e "  ${GREEN}curl -fsSL https://get.docker.com | sh${NC}"
+            echo ""
+            exit 1
+        fi
+    fi
 
     # Check Docker Compose
     if ! detect_docker_compose; then
         echo -e "${RED}✗ Docker Compose is not installed${NC}"
+        echo -e "${YELLOW}Docker Compose plugin should be included with Docker installation${NC}"
+        echo -e "${CYAN}Try reinstalling Docker or run:${NC}"
+        echo -e "  ${GREEN}apt-get install docker-compose-plugin${NC}"
         exit 1
     fi
     echo -e "${GREEN}✓ Docker Compose installed ($DOCKER_COMPOSE)${NC}"
 
     # Check Docker is running
     if ! docker ps >/dev/null 2>&1; then
-        echo -e "${RED}✗ Docker daemon is not running${NC}"
-        echo -e "${YELLOW}Please start Docker and try again${NC}"
-        exit 1
+        echo -e "${YELLOW}⚠ Docker daemon is not running. Starting it...${NC}"
+        systemctl start docker 2>/dev/null || service docker start 2>/dev/null || true
+        sleep 3
+
+        if ! docker ps >/dev/null 2>&1; then
+            echo -e "${RED}✗ Docker daemon failed to start${NC}"
+            echo -e "${YELLOW}Please start Docker manually and try again${NC}"
+            exit 1
+        fi
     fi
     echo -e "${GREEN}✓ Docker daemon running${NC}"
 
