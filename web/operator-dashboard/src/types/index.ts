@@ -42,6 +42,7 @@ export interface OperatorStats {
   pending_payout: number;
   total_paid: number;
   active_nodes: number;
+  total_nodes?: number;
   total_sessions: number;
   total_bandwidth_kb: number;
   total_bandwidth_gb?: number; // Optional/Deprecated

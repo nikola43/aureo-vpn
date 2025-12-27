@@ -67,7 +67,7 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const handleRequestPayout = async () => {
+  const _handleRequestPayout = async () => {
     if (!data?.stats.pending_payout || data.stats.pending_payout < 10) {
       alert("Minimum payout amount is $10");
       return;
