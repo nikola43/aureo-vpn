@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nikola43/aureo-vpn/pkg/crypto"
 	"github.com/nikola43/aureo-vpn/pkg/database"
+	"github.com/nikola43/aureo-vpn/pkg/metrics"
 	"github.com/nikola43/aureo-vpn/pkg/models"
 	"github.com/nikola43/aureo-vpn/pkg/p2p"
 )
@@ -71,6 +72,7 @@ func (s *APIServer) setupRoutes() {
 	// Public routes
 	s.app.Get("/health", s.healthCheck)
 	s.app.Get("/info", s.getNodeInfo)
+	s.app.Get("/metrics", metrics.PrometheusHandler())
 
 	// API routes
 	api := s.app.Group("/api/v1")

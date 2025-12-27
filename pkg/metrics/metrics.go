@@ -151,6 +151,36 @@ var (
 		},
 		[]string{"operation", "table"},
 	)
+
+	// P2P metrics
+	P2PConnectedPeers = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "aureo_p2p_connected_peers",
+			Help: "Number of connected P2P peers",
+		},
+	)
+
+	P2PKnownNodes = promauto.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "aureo_p2p_known_nodes",
+			Help: "Number of known VPN nodes in the network",
+		},
+	)
+
+	// VPN traffic metrics
+	VPNBytesReceived = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "aureo_vpn_bytes_received_total",
+			Help: "Total bytes received by VPN",
+		},
+	)
+
+	VPNBytesSent = promauto.NewCounter(
+		prometheus.CounterOpts{
+			Name: "aureo_vpn_bytes_sent_total",
+			Help: "Total bytes sent by VPN",
+		},
+	)
 )
 
 // PrometheusHandler returns a Fiber handler for Prometheus metrics

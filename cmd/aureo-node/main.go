@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/nikola43/aureo-vpn/pkg/database"
+	"github.com/nikola43/aureo-vpn/pkg/metrics"
 	"github.com/nikola43/aureo-vpn/pkg/models"
 	"github.com/nikola43/aureo-vpn/pkg/p2p"
 )
@@ -478,6 +479,11 @@ func (n *DecentralizedNode) updateStatus() {
 	}
 
 	n.p2pHost.UpdateLocalNode("online", connections, loadScore, 0, 0, 0)
+
+	// Update Prometheus metrics
+	metrics.P2PConnectedPeers.Set(float64(n.p2pHost.ConnectedPeers()))
+	metrics.P2PKnownNodes.Set(float64(n.p2pHost.GetRegistry().Count()))
+	metrics.ActiveConnections.WithLabelValues("wireguard", n.identity.Name).Set(float64(connections))
 }
 
 func (n *DecentralizedNode) cleanupLoop() {
