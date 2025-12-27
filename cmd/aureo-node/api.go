@@ -95,6 +95,7 @@ func (s *APIServer) setupRoutes() {
 	protected.Post("/disconnect", s.disconnect)
 	protected.Get("/sessions", s.getSessions)
 	protected.Get("/config", s.getConfig)
+	protected.Post("/config/generate", s.generateConfig) // Client script compatibility
 }
 
 // Start starts the API server
@@ -393,7 +394,8 @@ func (s *APIServer) login(c *fiber.Ctx) error {
 			"email":    user.Email,
 			"username": user.Username,
 		},
-		"token": token,
+		"token":        token,
+		"access_token": token, // Compatibility with client scripts
 	})
 }
 
@@ -527,6 +529,51 @@ func (s *APIServer) getConfig(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(s.vpn.GetServerConfig())
+}
+
+// generateConfig handles client script compatibility for /api/v1/config/generate
+func (s *APIServer) generateConfig(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+
+	var req struct {
+		PublicKey string `json:"public_key"`
+		NodeID    string `json:"node_id"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request body",
+		})
+	}
+
+	if req.PublicKey == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "public_key is required",
+		})
+	}
+
+	if s.vpn == nil {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "VPN service not available",
+		})
+	}
+
+	// Create session
+	session, err := s.vpn.CreateSession(userID, req.PublicKey)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": err.Error(),
+		})
+	}
+
+	// Return in the format expected by client scripts
+	return c.JSON(fiber.Map{
+		"server_public_key": s.identity.WGPublicKey,
+		"server_endpoint":   fmt.Sprintf("%s:%d", s.config.PublicIP, s.config.WGPort),
+		"client_ip":         session.TunnelIP,
+		"dns":               "1.1.1.1,8.8.8.8",
+		"session_id":        session.ID,
+	})
 }
 
 // ============= Middleware =============
