@@ -221,6 +221,77 @@ get_config() {
     echo ""
 }
 
+# Get admin user configuration
+get_admin_config() {
+    section "👤 Admin User Setup"
+
+    echo -e "${CYAN}Create an admin account to connect to the VPN:${NC}\n"
+
+    # Admin email
+    while true; do
+        read -p "Admin email: " ADMIN_EMAIL
+        if [[ "$ADMIN_EMAIL" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+            break
+        else
+            echo -e "${RED}Please enter a valid email address${NC}"
+        fi
+    done
+
+    # Admin username
+    read -p "Admin username [admin]: " ADMIN_USERNAME
+    ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
+
+    # Admin password
+    while true; do
+        read -sp "Admin password (min 6 chars): " ADMIN_PASSWORD
+        echo ""
+        if [ ${#ADMIN_PASSWORD} -ge 6 ]; then
+            read -sp "Confirm password: " ADMIN_PASSWORD_CONFIRM
+            echo ""
+            if [ "$ADMIN_PASSWORD" = "$ADMIN_PASSWORD_CONFIRM" ]; then
+                break
+            else
+                echo -e "${RED}Passwords don't match. Try again.${NC}"
+            fi
+        else
+            echo -e "${RED}Password must be at least 6 characters${NC}"
+        fi
+    done
+
+    echo ""
+}
+
+# Create admin user via API
+create_admin_user() {
+    section "👤 Creating Admin User"
+
+    echo -e "${CYAN}Registering admin user...${NC}"
+
+    # Wait a bit more for API to be fully ready
+    sleep 2
+
+    REGISTER_RESPONSE=$(curl -s -X POST "http://localhost:8080/api/v1/auth/register" \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"$ADMIN_EMAIL\",\"username\":\"$ADMIN_USERNAME\",\"password\":\"$ADMIN_PASSWORD\"}" 2>/dev/null)
+
+    # Check for errors
+    if echo "$REGISTER_RESPONSE" | grep -q '"error"'; then
+        ERROR_MSG=$(echo "$REGISTER_RESPONSE" | grep -o '"error":"[^"]*"' | cut -d'"' -f4)
+        if [ "$ERROR_MSG" = "user already exists" ]; then
+            echo -e "${YELLOW}⚠ User already exists. You can login with existing credentials.${NC}"
+        else
+            echo -e "${RED}✗ Failed to create admin user: $ERROR_MSG${NC}"
+            echo -e "${YELLOW}You can create a user manually later:${NC}"
+            echo -e "  curl -X POST http://$PUBLIC_IP:8080/api/v1/auth/register \\"
+            echo -e "    -H 'Content-Type: application/json' \\"
+            echo -e "    -d '{\"email\":\"your@email.com\",\"username\":\"admin\",\"password\":\"yourpass\"}'"
+        fi
+    else
+        echo -e "${GREEN}✓ Admin user created successfully${NC}"
+        ADMIN_CREATED=true
+    fi
+}
+
 # Create .env file
 create_env_file() {
     section "📝 Creating Configuration"
@@ -405,9 +476,15 @@ COUNTRY=$COUNTRY
 COUNTRY_CODE=$COUNTRY_CODE
 CITY=$CITY
 DEPLOY_DIR=$DEPLOY_DIR
+ADMIN_EMAIL=$ADMIN_EMAIL
+ADMIN_USERNAME=$ADMIN_USERNAME
 SETUP_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 EOF
     chmod 600 "$CONFIG_DIR/node-info"
+
+    # Save admin password separately (more secure)
+    echo "$ADMIN_PASSWORD" > "$CONFIG_DIR/.admin-password"
+    chmod 600 "$CONFIG_DIR/.admin-password"
 }
 
 # Print summary
@@ -425,6 +502,15 @@ print_summary() {
     echo -e "  Peer ID:       ${GREEN}$PEER_ID${NC}"
     echo -e "  Location:      ${GREEN}$CITY, $COUNTRY ($COUNTRY_CODE)${NC}"
     echo -e "  Public IP:     ${GREEN}$PUBLIC_IP${NC}"
+    echo ""
+
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}  VPN LOGIN CREDENTIALS${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "  📧 Email:         ${GREEN}$ADMIN_EMAIL${NC}"
+    echo -e "  👤 Username:      ${GREEN}$ADMIN_USERNAME${NC}"
+    echo -e "  🔑 Password:      ${GREEN}$ADMIN_PASSWORD${NC}"
     echo ""
 
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -470,6 +556,19 @@ print_summary() {
     echo -e "  9090    - Prometheus"
     echo ""
 
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "${CYAN}  CONNECT TO VPN${NC}"
+    echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "  From macOS:"
+    echo -e "    ${GREEN}API_URL=http://$PUBLIC_IP:8080 ./scripts/aureo-vpn-mac.sh login${NC}"
+    echo -e "    ${GREEN}API_URL=http://$PUBLIC_IP:8080 ./scripts/aureo-vpn-mac.sh connect${NC}"
+    echo ""
+    echo -e "  From Linux:"
+    echo -e "    ${GREEN}API_URL=http://$PUBLIC_IP:8080 ./scripts/aureo-vpn-linux.sh login${NC}"
+    echo -e "    ${GREEN}API_URL=http://$PUBLIC_IP:8080 ./scripts/aureo-vpn-linux.sh connect${NC}"
+    echo ""
+
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo -e "${GREEN}  🎊 Node is ready to accept connections! 🎊${NC}"
     echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -486,10 +585,12 @@ main() {
     check_prerequisites
     detect_info
     get_config
+    get_admin_config
     create_env_file
     configure_firewall
     deploy_services
     wait_for_services
+    create_admin_user
     get_node_info
     create_management_script
     save_credentials
