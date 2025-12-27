@@ -1,19 +1,15 @@
 package api
 
 import (
-	"encoding/json"
-	"fmt"
-	"os/exec"
 	"strconv"
-	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/nikola43/aureo-vpn/pkg/auth"
 	"github.com/nikola43/aureo-vpn/pkg/database"
 	apperrors "github.com/nikola43/aureo-vpn/pkg/errors"
-	"github.com/nikola43/aureo-vpn/pkg/models"
 	"github.com/nikola43/aureo-vpn/pkg/metrics"
+	"github.com/nikola43/aureo-vpn/pkg/models"
 	"github.com/nikola43/aureo-vpn/pkg/operator"
 )
 
@@ -277,12 +273,12 @@ func (h *Handlers) GetSystemStats(c *fiber.Ctx) error {
 	db := database.GetDB()
 
 	var stats struct {
-		TotalUsers        int64 `json:"total_users"`
-		ActiveUsers       int64 `json:"active_users"`
-		TotalNodes        int64 `json:"total_nodes"`
-		OnlineNodes       int64 `json:"online_nodes"`
-		TotalSessions     int64 `json:"total_sessions"`
-		ActiveSessions    int64 `json:"active_sessions"`
+		TotalUsers     int64 `json:"total_users"`
+		ActiveUsers    int64 `json:"active_users"`
+		TotalNodes     int64 `json:"total_nodes"`
+		OnlineNodes    int64 `json:"online_nodes"`
+		TotalSessions  int64 `json:"total_sessions"`
+		ActiveSessions int64 `json:"active_sessions"`
 	}
 
 	db.Model(&models.User{}).Count(&stats.TotalUsers)
@@ -642,44 +638,11 @@ func (h *Handlers) UpdateProfile(c *fiber.Ctx) error {
 
 // ChangePassword changes the authenticated user's password
 func (h *Handlers) ChangePassword(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error": "change password not implemented yet",
-	})
-}
+	userID := c.Locals("user_id").(uuid.UUID)
 
-// GetNode returns a specific node by ID
-func (h *Handlers) GetNode(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error": "get node not implemented yet",
-	})
-}
-
-// CreateSession creates a new VPN session
-func (h *Handlers) CreateSession(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error": "create session not implemented yet",
-	})
-}
-
-// DisconnectSession disconnects an active VPN session
-func (h *Handlers) DisconnectSession(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error": "disconnect session not implemented yet",
-	})
-}
-
-// GetSession returns session details
-func (h *Handlers) GetSession(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error": "get session not implemented yet",
-	})
-}
-
-// GenerateConfig generates VPN configuration
-func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
 	var req struct {
-		PublicKey string `json:"public_key"`
-		NodeID    string `json:"node_id"`
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
 	}
 
 	if err := c.BodyParser(&req); err != nil {
@@ -688,54 +651,179 @@ func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
 		})
 	}
 
-	if req.PublicKey == "" {
+	if req.OldPassword == "" || req.NewPassword == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "public_key is required",
+			"error": "old_password and new_password are required",
 		})
 	}
 
-	// Call the peer registration script
-	cmd := exec.Command("/opt/aureo-vpn/add-wireguard-peer.sh", req.PublicKey)
-	output, err := cmd.CombinedOutput()
+	if err := h.authService.UpdatePassword(userID, req.OldPassword, req.NewPassword); err != nil {
+		if err == auth.ErrInvalidCredentials {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "invalid old password",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to update password",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"message": "password updated successfully",
+	})
+}
+
+// GetNode returns a specific node by ID
+func (h *Handlers) GetNode(c *fiber.Ctx) error {
+	nodeID, err := uuid.Parse(c.Params("id"))
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": fmt.Sprintf("failed to register peer: %s", string(output)),
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid node id",
 		})
 	}
 
-	// Parse JSON output from script
-	var config map[string]interface{}
-	outputStr := string(output)
-
-	// Find JSON start
-	jsonStart := strings.Index(outputStr, "{")
-	if jsonStart == -1 {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to parse configuration",
+	var node models.VPNNode
+	db := database.GetDB()
+	if err := db.First(&node, nodeID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "node not found",
 		})
 	}
 
-	jsonStr := outputStr[jsonStart:]
-	if err := json.Unmarshal([]byte(jsonStr), &config); err != nil {
+	return c.JSON(node)
+}
+
+// CreateSession creates a new VPN session
+func (h *Handlers) CreateSession(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+
+	var req struct {
+		NodeID   string `json:"node_id"`
+		Protocol string `json:"protocol"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request body",
+		})
+	}
+
+	nodeID, err := uuid.Parse(req.NodeID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid node id",
+		})
+	}
+
+	db := database.GetDB()
+
+	// Check if node exists and is online
+	var node models.VPNNode
+	if err := db.First(&node, nodeID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "node not found",
+		})
+	}
+
+	// Create pending session
+	session := models.Session{
+		UserID:            userID,
+		NodeID:            nodeID,
+		Protocol:          req.Protocol,
+		Status:            "pending",
+		KillSwitchEnabled: true,
+		DNSLeakProtection: true,
+		ClientIP:          c.IP(),
+		TunnelIP:          "", // Will be assigned by node
+	}
+
+	if err := db.Create(&session).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to parse configuration",
+			"error": "failed to create session",
+		})
+	}
+
+	// Return session (client should poll until active)
+	return c.Status(fiber.StatusCreated).JSON(session)
+}
+
+// DisconnectSession disconnects an active VPN session
+func (h *Handlers) DisconnectSession(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+	sessionID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid session id"})
+	}
+
+	db := database.GetDB()
+	// Update status to pending_disconnect so the node can pick it up
+	if err := db.Model(&models.Session{}).
+		Where("id = ? AND user_id = ? AND status = ?", sessionID, userID, "active").
+		Update("status", "pending_disconnect").Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "failed to disconnect"})
+	}
+
+	return c.SendStatus(fiber.StatusOK)
+}
+
+// GetSession returns session details
+func (h *Handlers) GetSession(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+	sessionID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid session id"})
+	}
+
+	var session models.Session
+	db := database.GetDB()
+	if err := db.Where("id = ? AND user_id = ?", sessionID, userID).First(&session).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "session not found"})
+	}
+
+	return c.JSON(session)
+}
+
+// GenerateConfig generates VPN configuration
+func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
+	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
+		"error": "generate config is deprecated. please use create session flow.",
+	})
+}
+
+// GetConfig returns a specific configuration
+func (h *Handlers) GetConfig(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+	configID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid config id",
+		})
+	}
+
+	var config models.Config
+	if err := database.GetDB().Where("id = ? AND user_id = ?", configID, userID).First(&config).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "config not found",
 		})
 	}
 
 	return c.JSON(config)
 }
 
-// GetConfig returns a specific configuration
-func (h *Handlers) GetConfig(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error": "get config not implemented yet",
-	})
-}
-
 // ListConfigs returns all configurations for a user
 func (h *Handlers) ListConfigs(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error": "list configs not implemented yet",
+	userID := c.Locals("user_id").(uuid.UUID)
+
+	var configs []models.Config
+	if err := database.GetDB().Where("user_id = ?", userID).Find(&configs).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to list configs",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"configs": configs,
+		"count":   len(configs),
 	})
 }
 

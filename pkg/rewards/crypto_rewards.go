@@ -35,7 +35,7 @@ var DefaultRewardTiers = []models.NodeReward{
 		TierName:           "bronze",
 		MinReputationScore: 0,
 		MinUptimePercent:   50,
-		BaseRatePerGB:      0.01,  // $0.01 per GB
+		BaseRatePerGB:      0.01, // $0.01 per GB
 		BonusMultiplier:    1.0,
 		MinBandwidth:       50,
 		MaxLatency:         150,
@@ -55,7 +55,7 @@ var DefaultRewardTiers = []models.NodeReward{
 		TierName:           "gold",
 		MinReputationScore: 75,
 		MinUptimePercent:   90,
-		BaseRatePerGB:      0.02,  // $0.02 per GB
+		BaseRatePerGB:      0.02, // $0.02 per GB
 		BonusMultiplier:    1.5,
 		MinBandwidth:       200,
 		MaxLatency:         75,
@@ -65,7 +65,7 @@ var DefaultRewardTiers = []models.NodeReward{
 		TierName:           "platinum",
 		MinReputationScore: 90,
 		MinUptimePercent:   95,
-		BaseRatePerGB:      0.03,  // $0.03 per GB
+		BaseRatePerGB:      0.03, // $0.03 per GB
 		BonusMultiplier:    2.0,
 		MinBandwidth:       500,
 		MaxLatency:         50,
@@ -89,11 +89,17 @@ func (rs *RewardService) InitializeRewardTiers() error {
 }
 
 // RecordEarning records an earning event for a session
-func (rs *RewardService) RecordEarning(ctx context.Context, sessionID uuid.UUID, bandwidthGB float64, durationMinutes int) error {
+func (rs *RewardService) RecordEarning(ctx context.Context, sessionID uuid.UUID, bandwidthKB int64, durationMinutes int) error {
 	// Get session details
 	var session models.Session
 	if err := rs.db.Preload("Node").First(&session, sessionID).Error; err != nil {
 		return fmt.Errorf("session not found: %w", err)
+	}
+
+	// Check if node is loaded
+	if session.Node == nil {
+		// Should not happen if Preload works and FK is valid, but good for safety
+		return fmt.Errorf("session node not found")
 	}
 
 	// Check if node is operator-owned
@@ -118,6 +124,8 @@ func (rs *RewardService) RecordEarning(ctx context.Context, sessionID uuid.UUID,
 	qualityScore := calculateSessionQuality(&session)
 
 	// Calculate earnings
+	// Convert KB to GB for rate calculation
+	bandwidthGB := float64(bandwidthKB) / (1024.0 * 1024.0)
 	amountUSD := models.CalculateEarnings(
 		bandwidthGB,
 		durationMinutes,
@@ -130,7 +138,7 @@ func (rs *RewardService) RecordEarning(ctx context.Context, sessionID uuid.UUID,
 		OperatorID:        *session.Node.OperatorID,
 		NodeID:            session.NodeID,
 		SessionID:         sessionID,
-		BandwidthGB:       bandwidthGB,
+		BandwidthKB:       bandwidthKB,
 		DurationMinutes:   durationMinutes,
 		RatePerGB:         tier.BaseRatePerGB * tier.BonusMultiplier,
 		AmountUSD:         amountUSD,
@@ -505,20 +513,22 @@ func (rs *RewardService) GetOperatorStats(ctx context.Context, operatorID uuid.U
 	}
 
 	stats := map[string]interface{}{
-		"operator_id":       operator.ID,
-		"total_earned":      operator.TotalEarned,
-		"pending_payout":    operator.PendingPayout,
-		"earnings_today":    earningsToday,
-		"earnings_week":     earningsWeek,
-		"earnings_month":    earningsMonth,
-		"active_nodes":      operator.ActiveNodesCount,
-		"total_bandwidth":   operator.TotalBandwidthGB,
-		"reputation_score":  operator.ReputationScore,
-		"average_uptime":    operator.AverageUptime,
-		"current_tier":      tier.TierName,
-		"rate_per_gb":       tier.BaseRatePerGB * tier.BonusMultiplier,
-		"connected_users":   totalConnectedUsers,
-		"current_traffic":   totalCurrentTrafficMbps,
+		"operator_id":        operator.ID,
+		"total_earned":       operator.TotalEarned,
+		"pending_payout":     operator.PendingPayout,
+		"earnings_today":     earningsToday,
+		"earnings_week":      earningsWeek,
+		"earnings_month":     earningsMonth,
+		"active_nodes":       operator.ActiveNodesCount,
+		"total_bandwidth_kb": operator.TotalBandwidthKB,
+		"total_bandwidth_gb": float64(operator.TotalBandwidthKB) / (1024.0 * 1024.0),
+		"total_bandwidth":    float64(operator.TotalBandwidthKB) / (1024.0 * 1024.0), // For backward compatibility
+		"reputation_score":   operator.ReputationScore,
+		"average_uptime":     operator.AverageUptime,
+		"current_tier":       tier.TierName,
+		"rate_per_gb":        tier.BaseRatePerGB * tier.BonusMultiplier,
+		"connected_users":    totalConnectedUsers,
+		"current_traffic":    totalCurrentTrafficMbps,
 	}
 
 	return stats, nil

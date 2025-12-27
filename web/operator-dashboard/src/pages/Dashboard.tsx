@@ -1,12 +1,31 @@
-import React, { useEffect, useState } from 'react';
-import { api } from '../services/api';
-import { DashboardData } from '../types';
+import React, { useEffect, useState } from "react";
+import { api } from "../services/api";
+import { DashboardData } from "../types";
 import {
-  DollarSign, TrendingUp, Server, Activity,
-  Wallet, ArrowUpRight, Clock, CheckCircle, Sparkles, Zap, Users
-} from 'lucide-react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { format } from 'date-fns';
+  DollarSign,
+  TrendingUp,
+  Server,
+  Activity,
+  Wallet,
+  ArrowUpRight,
+  Clock,
+  CheckCircle,
+  Sparkles,
+  Zap,
+  Users,
+} from "lucide-react";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+} from "recharts";
+import { format } from "date-fns";
 
 export const Dashboard: React.FC = () => {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -35,11 +54,11 @@ export const Dashboard: React.FC = () => {
     } catch (err: any) {
       // If 403, user is not registered as operator
       if (err.response?.status === 403) {
-        window.location.href = '/register-operator';
+        window.location.href = "/register-operator";
         return;
       }
       if (showLoading) {
-        setError(err.message || 'Failed to load dashboard');
+        setError(err.message || "Failed to load dashboard");
       }
     } finally {
       if (showLoading) {
@@ -50,20 +69,20 @@ export const Dashboard: React.FC = () => {
 
   const handleRequestPayout = async () => {
     if (!data?.stats.pending_payout || data.stats.pending_payout < 10) {
-      alert('Minimum payout amount is $10');
+      alert("Minimum payout amount is $10");
       return;
     }
 
-    if (!confirm('Request payout? This will process your pending balance.')) {
+    if (!confirm("Request payout? This will process your pending balance.")) {
       return;
     }
 
     try {
       await api.requestPayout();
-      alert('Payout requested successfully! Processing may take 24-48 hours.');
+      alert("Payout requested successfully! Processing may take 24-48 hours.");
       loadDashboard();
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to request payout');
+      alert(err.response?.data?.error || "Failed to request payout");
     }
   };
 
@@ -81,7 +100,9 @@ export const Dashboard: React.FC = () => {
         <div className="relative backdrop-blur-xl bg-white/10 border border-white/20 rounded-3xl shadow-2xl p-12">
           <div className="flex flex-col items-center space-y-4">
             <div className="animate-spin rounded-full h-16 w-16 border-4 border-white/20 border-t-white"></div>
-            <p className="text-white text-lg font-medium">Loading Dashboard...</p>
+            <p className="text-white text-lg font-medium">
+              Loading Dashboard...
+            </p>
           </div>
         </div>
       </div>
@@ -102,7 +123,9 @@ export const Dashboard: React.FC = () => {
         <div className="relative backdrop-blur-xl bg-red-500/20 border border-red-500/30 rounded-3xl shadow-2xl p-8">
           <div className="flex items-center space-x-3">
             <Zap className="h-6 w-6 text-white" />
-            <p className="text-white text-lg font-medium">Error: {error || 'No data available'}</p>
+            <p className="text-white text-lg font-medium">
+              Error: {error || "No data available"}
+            </p>
           </div>
         </div>
       </div>
@@ -114,7 +137,7 @@ export const Dashboard: React.FC = () => {
   // Calculate current traffic in MB/s from all active nodes
   const currentTrafficMB = active_nodes.reduce((total, node) => {
     // Convert Gbps to MB/s: 1 Gbps = 125 MB/s
-    return total + ((node.bandwidth_usage_gbps || 0) * 125);
+    return total + (node.bandwidth_usage_gbps || 0) * 125;
   }, 0);
 
   // Calculate total connected users from all active nodes
@@ -123,30 +146,33 @@ export const Dashboard: React.FC = () => {
   }, 0);
 
   // Prepare chart data
-  const earningsChartData = recent_earnings.slice(0, 10).reverse().map(e => ({
-    date: format(new Date(e.created_at), 'MM/dd'),
-    amount: e.amount_usd,
-    bandwidth: e.bandwidth_gb,
-  }));
+  const earningsChartData = recent_earnings
+    .slice(0, 10)
+    .reverse()
+    .map((e) => ({
+      date: format(new Date(e.created_at), "MM/dd"),
+      amount: e.amount_usd,
+      bandwidth: (e.bandwidth_kb || 0) / (1024 * 1024),
+    }));
 
   const getTierColor = (tier: string) => {
     const colors: Record<string, string> = {
-      bronze: 'from-amber-600 to-amber-800',
-      silver: 'from-gray-400 to-gray-600',
-      gold: 'from-yellow-400 to-yellow-600',
-      platinum: 'from-purple-400 to-purple-600',
+      bronze: "from-amber-600 to-amber-800",
+      silver: "from-gray-400 to-gray-600",
+      gold: "from-yellow-400 to-yellow-600",
+      platinum: "from-purple-400 to-purple-600",
     };
-    return colors[tier] || 'from-gray-400 to-gray-600';
+    return colors[tier] || "from-gray-400 to-gray-600";
   };
 
   const getTierIcon = (tier: string) => {
     const icons: Record<string, string> = {
-      bronze: '🥉',
-      silver: '🥈',
-      gold: '🥇',
-      platinum: '💎',
+      bronze: "🥉",
+      silver: "🥈",
+      gold: "🥇",
+      platinum: "💎",
     };
-    return icons[tier] || '⭐';
+    return icons[tier] || "⭐";
   };
 
   return (
@@ -179,7 +205,9 @@ export const Dashboard: React.FC = () => {
                   <Sparkles className="h-8 w-8 text-white" />
                 </div>
                 <div>
-                  <h1 className="text-4xl font-bold text-white tracking-tight">Operator Dashboard</h1>
+                  <h1 className="text-4xl font-bold text-white tracking-tight">
+                    Operator Dashboard
+                  </h1>
                   <p className="text-white/80 text-lg font-light mt-1">
                     Welcome back! Track your earnings and manage your nodes.
                   </p>
@@ -196,7 +224,9 @@ export const Dashboard: React.FC = () => {
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-white/80">Total Earned</p>
+                    <p className="text-sm font-medium text-white/80">
+                      Total Earned
+                    </p>
                     <p className="text-3xl font-bold text-white mt-2">
                       ${(stats.total_earned || 0).toFixed(2)}
                     </p>
@@ -215,7 +245,9 @@ export const Dashboard: React.FC = () => {
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-white/80">Pending Payout</p>
+                    <p className="text-sm font-medium text-white/80">
+                      Pending Payout
+                    </p>
                     <p className="text-3xl font-bold text-white mt-2">
                       ${(stats.pending_payout || 0).toFixed(4)}
                     </p>
@@ -241,7 +273,9 @@ export const Dashboard: React.FC = () => {
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-white/80">Active Nodes</p>
+                    <p className="text-sm font-medium text-white/80">
+                      Active Nodes
+                    </p>
                     <p className="text-3xl font-bold text-white mt-2">
                       {stats.active_nodes}
                     </p>
@@ -260,13 +294,21 @@ export const Dashboard: React.FC = () => {
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-white/80">Reputation Score</p>
+                    <p className="text-sm font-medium text-white/80">
+                      Reputation Score
+                    </p>
                     <p className="text-3xl font-bold text-white mt-2">
                       {(stats.reputation_score || 0).toFixed(1)}
                     </p>
-                    <div className={`mt-3 inline-flex items-center px-3 py-1.5 rounded-full bg-gradient-to-r ${getTierColor(stats.current_tier || 'bronze')} text-white text-xs font-bold shadow-lg`}>
-                      <span className="mr-1">{getTierIcon(stats.current_tier || 'bronze')}</span>
-                      {(stats.current_tier || 'bronze').toUpperCase()}
+                    <div
+                      className={`mt-3 inline-flex items-center px-3 py-1.5 rounded-full bg-gradient-to-r ${getTierColor(
+                        stats.current_tier || "bronze"
+                      )} text-white text-xs font-bold shadow-lg`}
+                    >
+                      <span className="mr-1">
+                        {getTierIcon(stats.current_tier || "bronze")}
+                      </span>
+                      {(stats.current_tier || "bronze").toUpperCase()}
                     </div>
                   </div>
                   <div className="bg-gradient-to-br from-yellow-400 to-yellow-600 p-4 rounded-2xl shadow-lg">
@@ -283,7 +325,9 @@ export const Dashboard: React.FC = () => {
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-white/80">Current Traffic</p>
+                    <p className="text-sm font-medium text-white/80">
+                      Current Traffic
+                    </p>
                     <p className="text-3xl font-bold text-white mt-2">
                       {currentTrafficMB.toFixed(1)}
                     </p>
@@ -303,7 +347,9 @@ export const Dashboard: React.FC = () => {
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-white/80">Connected Users</p>
+                    <p className="text-sm font-medium text-white/80">
+                      Connected Users
+                    </p>
                     <p className="text-3xl font-bold text-white mt-2">
                       {connectedUsers}
                     </p>
@@ -331,20 +377,29 @@ export const Dashboard: React.FC = () => {
                 <div className="backdrop-blur-lg bg-white/5 rounded-xl p-4 border border-white/10">
                   <ResponsiveContainer width="100%" height={250}>
                     <LineChart data={earningsChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="rgba(255,255,255,0.1)"
+                      />
                       <XAxis dataKey="date" stroke="rgba(255,255,255,0.6)" />
                       <YAxis stroke="rgba(255,255,255,0.6)" />
                       <Tooltip
                         contentStyle={{
-                          backgroundColor: 'rgba(255,255,255,0.1)',
-                          backdropFilter: 'blur(10px)',
-                          border: '1px solid rgba(255,255,255,0.2)',
-                          borderRadius: '12px',
-                          color: 'white'
+                          backgroundColor: "rgba(255,255,255,0.1)",
+                          backdropFilter: "blur(10px)",
+                          border: "1px solid rgba(255,255,255,0.2)",
+                          borderRadius: "12px",
+                          color: "white",
                         }}
                         formatter={(value: number) => `$${value.toFixed(2)}`}
                       />
-                      <Line type="monotone" dataKey="amount" stroke="#60a5fa" strokeWidth={3} dot={{ fill: '#3b82f6', r: 5 }} />
+                      <Line
+                        type="monotone"
+                        dataKey="amount"
+                        stroke="#60a5fa"
+                        strokeWidth={3}
+                        dot={{ fill: "#3b82f6", r: 5 }}
+                      />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -362,24 +417,45 @@ export const Dashboard: React.FC = () => {
                 <div className="backdrop-blur-lg bg-white/5 rounded-xl p-4 border border-white/10">
                   <ResponsiveContainer width="100%" height={250}>
                     <BarChart data={earningsChartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="rgba(255,255,255,0.1)"
+                      />
                       <XAxis dataKey="date" stroke="rgba(255,255,255,0.6)" />
                       <YAxis stroke="rgba(255,255,255,0.6)" />
                       <Tooltip
                         contentStyle={{
-                          backgroundColor: 'rgba(255,255,255,0.1)',
-                          backdropFilter: 'blur(10px)',
-                          border: '1px solid rgba(255,255,255,0.2)',
-                          borderRadius: '12px',
-                          color: 'white'
+                          backgroundColor: "rgba(255,255,255,0.1)",
+                          backdropFilter: "blur(10px)",
+                          border: "1px solid rgba(255,255,255,0.2)",
+                          borderRadius: "12px",
+                          color: "white",
                         }}
                         formatter={(value: number) => `${value.toFixed(1)} GB`}
                       />
-                      <Bar dataKey="bandwidth" fill="url(#colorBandwidth)" radius={[8, 8, 0, 0]} />
+                      <Bar
+                        dataKey="bandwidth"
+                        fill="url(#colorBandwidth)"
+                        radius={[8, 8, 0, 0]}
+                      />
                       <defs>
-                        <linearGradient id="colorBandwidth" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="0%" stopColor="#a78bfa" stopOpacity={1} />
-                          <stop offset="100%" stopColor="#8b5cf6" stopOpacity={0.8} />
+                        <linearGradient
+                          id="colorBandwidth"
+                          x1="0"
+                          y1="0"
+                          x2="0"
+                          y2="1"
+                        >
+                          <stop
+                            offset="0%"
+                            stopColor="#a78bfa"
+                            stopOpacity={1}
+                          />
+                          <stop
+                            offset="100%"
+                            stopColor="#8b5cf6"
+                            stopOpacity={0.8}
+                          />
                         </linearGradient>
                       </defs>
                     </BarChart>
@@ -404,34 +480,50 @@ export const Dashboard: React.FC = () => {
                     <p className="text-white/60">No active nodes yet</p>
                   </div>
                 ) : (
-                  active_nodes.map(node => (
+                  active_nodes.map((node) => (
                     <div
                       key={node.id}
                       className="group backdrop-blur-lg bg-white/5 hover:bg-white/10 border border-white/20 rounded-xl p-5 transition-all duration-300 hover:scale-[1.02] hover:shadow-xl"
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center space-x-4">
-                          <div className={`relative ${node.status === 'online' ? 'bg-gradient-to-br from-green-400 to-green-600' : 'bg-gradient-to-br from-gray-400 to-gray-600'} p-3 rounded-xl shadow-lg`}>
+                          <div
+                            className={`relative ${
+                              node.status === "online"
+                                ? "bg-gradient-to-br from-green-400 to-green-600"
+                                : "bg-gradient-to-br from-gray-400 to-gray-600"
+                            } p-3 rounded-xl shadow-lg`}
+                          >
                             <Activity className="h-6 w-6 text-white" />
-                            {node.status === 'online' && (
+                            {node.status === "online" && (
                               <div className="absolute -top-1 -right-1 w-3 h-3 bg-green-400 rounded-full animate-ping"></div>
                             )}
                           </div>
                           <div>
-                            <p className="font-semibold text-white text-lg">{node.name}</p>
-                            <p className="text-sm text-white/70">{node.city}, {node.country}</p>
+                            <p className="font-semibold text-white text-lg">
+                              {node.name}
+                            </p>
+                            <p className="text-sm text-white/70">
+                              {node.city}, {node.country}
+                            </p>
                           </div>
                         </div>
                         <div className="text-right">
-                          <p className="font-bold text-white text-lg">${(node.total_earned_usd || 0).toFixed(2)}</p>
+                          <p className="font-bold text-white text-lg">
+                            ${(node.total_earned_usd || 0).toFixed(2)}
+                          </p>
                           <div className="flex items-center justify-end space-x-2 mt-1">
                             <div className="w-24 h-2 bg-white/20 rounded-full overflow-hidden">
                               <div
                                 className="h-full bg-gradient-to-r from-green-400 to-blue-500 rounded-full transition-all duration-500"
-                                style={{ width: `${node.uptime_percentage || 0}%` }}
+                                style={{
+                                  width: `${node.uptime_percentage || 0}%`,
+                                }}
                               ></div>
                             </div>
-                            <p className="text-sm text-white/70 font-medium">{(node.uptime_percentage || 0).toFixed(1)}%</p>
+                            <p className="text-sm text-white/70 font-medium">
+                              {(node.uptime_percentage || 0).toFixed(1)}%
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -453,7 +545,7 @@ export const Dashboard: React.FC = () => {
                   Recent Earnings
                 </h2>
                 <div className="space-y-3">
-                  {recent_earnings.slice(0, 5).map(earning => (
+                  {recent_earnings.slice(0, 5).map((earning) => (
                     <div
                       key={earning.id}
                       className="backdrop-blur-lg bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 transition-all duration-300 hover:scale-[1.02]"
@@ -465,10 +557,17 @@ export const Dashboard: React.FC = () => {
                           </div>
                           <div>
                             <p className="text-sm font-semibold text-white">
-                              {(earning.bandwidth_gb || 0).toFixed(1)} GB
+                              {(
+                                (earning.bandwidth_kb || 0) /
+                                (1024 * 1024)
+                              ).toFixed(4)}{" "}
+                              GB
                             </p>
                             <p className="text-xs text-white/60">
-                              {format(new Date(earning.created_at), 'MMM d, h:mm a')}
+                              {format(
+                                new Date(earning.created_at),
+                                "MMM d, h:mm a"
+                              )}
                             </p>
                           </div>
                         </div>
@@ -497,15 +596,21 @@ export const Dashboard: React.FC = () => {
                       <p className="text-white/60 text-sm">No payouts yet</p>
                     </div>
                   ) : (
-                    recent_payouts.slice(0, 5).map(payout => (
+                    recent_payouts.slice(0, 5).map((payout) => (
                       <div
                         key={payout.id}
                         className="backdrop-blur-lg bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl p-4 transition-all duration-300 hover:scale-[1.02]"
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center space-x-3">
-                            <div className={`${payout.status === 'completed' ? 'bg-gradient-to-br from-green-400 to-emerald-600' : 'bg-gradient-to-br from-yellow-400 to-orange-600'} p-2 rounded-lg`}>
-                              {payout.status === 'completed' ? (
+                            <div
+                              className={`${
+                                payout.status === "completed"
+                                  ? "bg-gradient-to-br from-green-400 to-emerald-600"
+                                  : "bg-gradient-to-br from-yellow-400 to-orange-600"
+                              } p-2 rounded-lg`}
+                            >
+                              {payout.status === "completed" ? (
                                 <CheckCircle className="h-4 w-4 text-white" />
                               ) : (
                                 <Clock className="h-4 w-4 text-white" />
@@ -513,10 +618,14 @@ export const Dashboard: React.FC = () => {
                             </div>
                             <div>
                               <p className="text-sm font-semibold text-white">
-                                {(payout.crypto_amount || 0).toFixed(6)} {payout.crypto_currency.toUpperCase()}
+                                {(payout.crypto_amount || 0).toFixed(6)}{" "}
+                                {payout.crypto_currency.toUpperCase()}
                               </p>
                               <p className="text-xs text-white/60">
-                                {format(new Date(payout.created_at), 'MMM d, h:mm a')}
+                                {format(
+                                  new Date(payout.created_at),
+                                  "MMM d, h:mm a"
+                                )}
                               </p>
                             </div>
                           </div>
@@ -524,7 +633,9 @@ export const Dashboard: React.FC = () => {
                             <span className="text-base font-bold text-white">
                               ${(payout.amount_usd || 0).toFixed(2)}
                             </span>
-                            <p className="text-xs text-white/70 capitalize">{payout.status}</p>
+                            <p className="text-xs text-white/70 capitalize">
+                              {payout.status}
+                            </p>
                           </div>
                         </div>
                       </div>

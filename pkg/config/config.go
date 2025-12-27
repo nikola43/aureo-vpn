@@ -31,6 +31,9 @@ type Config struct {
 	// Metrics configuration
 	Metrics MetricsConfig
 
+	// Blockchain configuration
+	Blockchain BlockchainConfig
+
 	// VPN configuration
 	VPN VPNConfig
 }
@@ -98,23 +101,23 @@ type LoggingConfig struct {
 
 // SecurityConfig holds security configuration
 type SecurityConfig struct {
-	CORS               CORSConfig
-	RateLimit          RateLimitConfig
-	AllowedOrigins     []string
-	TrustedProxies     []string
-	PasswordMinLength  int
-	MaxLoginAttempts   int
-	LockoutDuration    time.Duration
+	CORS              CORSConfig
+	RateLimit         RateLimitConfig
+	AllowedOrigins    []string
+	TrustedProxies    []string
+	PasswordMinLength int
+	MaxLoginAttempts  int
+	LockoutDuration   time.Duration
 }
 
 // CORSConfig holds CORS configuration
 type CORSConfig struct {
-	Enabled        bool
-	AllowedOrigins []string
-	AllowedMethods []string
-	AllowedHeaders []string
+	Enabled          bool
+	AllowedOrigins   []string
+	AllowedMethods   []string
+	AllowedHeaders   []string
 	AllowCredentials bool
-	MaxAge         int
+	MaxAge           int
 }
 
 // RateLimitConfig holds rate limiting configuration
@@ -131,17 +134,30 @@ type MetricsConfig struct {
 	Path    string
 }
 
+// BlockchainConfig holds blockchain configuration
+type BlockchainConfig struct {
+	EthereumRPCURL      string
+	EthereumPrivateKey  string
+	EthereumChainID     int64
+	BitcoinRPCURL       string
+	BitcoinRPCUser      string
+	BitcoinRPCPassword  string
+	LitecoinRPCURL      string
+	LitecoinRPCUser     string
+	LitecoinRPCPassword string
+}
+
 // VPNConfig holds VPN-specific configuration
 type VPNConfig struct {
-	NodeID                string
-	DefaultProtocol       string
-	SessionTimeout        time.Duration
-	MaxSessionsPerUser    int
-	DataTransferLimitGB   float64
-	EnableKillSwitch      bool
-	EnableDNSProtection   bool
-	EnableMultiHop        bool
-	EnableObfuscation     bool
+	NodeID              string
+	DefaultProtocol     string
+	SessionTimeout      time.Duration
+	MaxSessionsPerUser  int
+	DataTransferLimitGB float64
+	EnableKillSwitch    bool
+	EnableDNSProtection bool
+	EnableMultiHop      bool
+	EnableObfuscation   bool
 }
 
 // Load loads configuration from environment variables
@@ -225,6 +241,18 @@ func Load() (*Config, error) {
 			Enabled: getEnvAsBool("METRICS_ENABLED", true),
 			Port:    getEnv("METRICS_PORT", "9090"),
 			Path:    getEnv("METRICS_PATH", "/metrics"),
+		},
+
+		Blockchain: BlockchainConfig{
+			EthereumRPCURL:      getEnv("ETHEREUM_RPC_URL", ""),
+			EthereumPrivateKey:  getEnv("ETHEREUM_PRIVATE_KEY", ""),
+			EthereumChainID:     int64(getEnvAsInt("ETHEREUM_CHAIN_ID", 1)),
+			BitcoinRPCURL:       getEnv("BITCOIN_RPC_URL", ""),
+			BitcoinRPCUser:      getEnv("BITCOIN_RPC_USER", ""),
+			BitcoinRPCPassword:  getEnv("BITCOIN_RPC_PASSWORD", ""),
+			LitecoinRPCURL:      getEnv("LITECOIN_RPC_URL", ""),
+			LitecoinRPCUser:     getEnv("LITECOIN_RPC_USER", ""),
+			LitecoinRPCPassword: getEnv("LITECOIN_RPC_PASSWORD", ""),
 		},
 
 		VPN: VPNConfig{

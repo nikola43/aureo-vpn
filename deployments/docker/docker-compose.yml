@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   # PostgreSQL Database
@@ -45,17 +45,19 @@ services:
       PORT: "8080"
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: aureo_vpn
+      DB_USER: "${DB_USER:-postgres}"
+      DB_PASSWORD: "${DB_PASSWORD:-postgres}"
+      DB_NAME: "${DB_NAME:-aureo_vpn}"
       DB_SSL_MODE: disable
-      JWT_SECRET: "your-super-secret-jwt-key-change-in-production"
+      JWT_SECRET: "${JWT_SECRET}"
       REDIS_HOST: redis
       REDIS_PORT: "6379"
+      ETHEREUM_RPC_URL: "${ETHEREUM_RPC_URL}"
+      ETHEREUM_PRIVATE_KEY: "${ETHEREUM_PRIVATE_KEY}"
+      ENVIRONMENT: "${ENVIRONMENT:-production}"
     ports:
       - "8080:8080"
     volumes:
-      - /opt/aureo-vpn:/opt/aureo-vpn:ro
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       postgres:
@@ -75,9 +77,9 @@ services:
     environment:
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: aureo_vpn
+      DB_USER: "${DB_USER:-postgres}"
+      DB_PASSWORD: "${DB_PASSWORD:-postgres}"
+      DB_NAME: "${DB_NAME:-aureo_vpn}"
       DB_SSL_MODE: disable
     depends_on:
       postgres:
@@ -97,9 +99,9 @@ services:
       NODE_ID: "${NODE_ID_1}"
       DB_HOST: postgres
       DB_PORT: "5432"
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: aureo_vpn
+      DB_USER: "${DB_USER:-postgres}"
+      DB_PASSWORD: "${DB_PASSWORD:-postgres}"
+      DB_NAME: "${DB_NAME:-aureo_vpn}"
       DB_SSL_MODE: disable
     depends_on:
       postgres:
@@ -117,8 +119,8 @@ services:
       - net.ipv4.ip_forward=1
       - net.ipv6.conf.all.forwarding=1
     ports:
-      - "51820:51820/udp"  # WireGuard
-      - "1194:1194/udp"    # OpenVPN
+      - "51820:51820/udp" # WireGuard
+      - "1194:1194/udp" # OpenVPN
     restart: unless-stopped
 
   # Prometheus for metrics
@@ -129,8 +131,8 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - prometheus_data:/prometheus
     command:
-      - '--config.file=/etc/prometheus/prometheus.yml'
-      - '--storage.tsdb.path=/prometheus'
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
     ports:
       - "9090:9090"
     networks:

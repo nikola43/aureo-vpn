@@ -10,10 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/nikola43/aureo-vpn/pkg/blockchain"
 	"github.com/nikola43/aureo-vpn/pkg/database"
+	"github.com/nikola43/aureo-vpn/pkg/logger"
 	"github.com/nikola43/aureo-vpn/pkg/metrics"
 	"github.com/nikola43/aureo-vpn/pkg/models"
 	"github.com/nikola43/aureo-vpn/pkg/protocols/wireguard"
+	"github.com/nikola43/aureo-vpn/pkg/rewards"
 	"gorm.io/gorm"
 )
 
@@ -22,6 +25,7 @@ type Service struct {
 	nodeID         uuid.UUID
 	db             *gorm.DB
 	wgManager      *wireguard.Manager
+	rewardService  *rewards.RewardService
 	activeSessions map[uuid.UUID]*SessionInfo
 	mu             sync.RWMutex
 	ctx            context.Context
@@ -36,23 +40,95 @@ type Service struct {
 
 // SessionInfo holds session information
 type SessionInfo struct {
-	Session       *models.Session
-	PublicKey     string
-	LastKeepalive time.Time
+	Session            *models.Session
+	PublicKey          string
+	LastKeepalive      time.Time
+	BytesSent          int64
+	BytesReceived      int64
+	LastBytesSent      int64
+	LastBytesReceived  int64
+	PendingBandwidthKB int64
+	LastEarningsFlush  time.Time
 }
 
 // NewService creates a new VPN node service
 func NewService(nodeID uuid.UUID) *Service {
 	ctx, cancel := context.WithCancel(context.Background())
+	log := logger.NewDefault()
+	// Initialize blockchain service (with empty config for now as we don't have env vars handy here,
+	// but in production it should be configured)
+	blockchainService, _ := blockchain.NewService(blockchain.Config{}, log)
+	rewardService := rewards.NewRewardService(log, blockchainService)
 
 	return &Service{
 		nodeID:         nodeID,
 		db:             database.GetDB(),
 		wgManager:      wireguard.NewManager("wg0"),
+		rewardService:  rewardService,
 		activeSessions: make(map[uuid.UUID]*SessionInfo),
 		ctx:            ctx,
 		cancel:         cancel,
 	}
+}
+
+// loadActiveSessions restores active sessions from database
+func (s *Service) loadActiveSessions() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var sessions []models.Session
+	if err := s.db.Where("node_id = ? AND status = ?", s.nodeID, "active").Find(&sessions).Error; err != nil {
+		return err
+	}
+
+	// Get current WG peers to verify
+	stats, err := s.wgManager.GetInterfaceStats()
+	if err != nil {
+		log.Printf("Warning: failed to get WG stats during restoration: %v", err)
+	}
+
+	// Build map of existing peers
+	existingPeers := make(map[string]bool)
+	if stats != nil {
+		for _, p := range stats.Peers {
+			existingPeers[p.PublicKey] = true
+		}
+	}
+
+	restoredCount := 0
+	for i := range sessions {
+		session := &sessions[i]
+
+		// Skip if missing required info
+		if session.PublicKey == "" || session.TunnelIP == "" {
+			continue
+		}
+
+		// Check if peer exists in WG
+		if !existingPeers[session.PublicKey] {
+			// Restore peer to WG
+			peer := wireguard.PeerConfig{
+				PublicKey:           session.PublicKey,
+				AllowedIPs:          []string{session.TunnelIP},
+				PersistentKeepalive: 25,
+			}
+			if err := s.wgManager.AddPeer(peer); err != nil {
+				log.Printf("Failed to restore peer for session %s: %v", session.ID, err)
+				continue
+			}
+		}
+
+		s.activeSessions[session.ID] = &SessionInfo{
+			Session:           session,
+			PublicKey:         session.PublicKey,
+			LastKeepalive:     time.Now(),
+			LastEarningsFlush: time.Now(),
+		}
+		restoredCount++
+	}
+
+	log.Printf("Restored %d active sessions", restoredCount)
+	return nil
 }
 
 // Start starts the VPN node service
@@ -110,11 +186,17 @@ func (s *Service) Start() error {
 		return fmt.Errorf("failed to setup WireGuard: %w", err)
 	}
 
+	// Restore active sessions
+	if err := s.loadActiveSessions(); err != nil {
+		log.Printf("Failed to restore active sessions: %v", err)
+	}
+
 	// Start background tasks
 	go s.heartbeatLoop()
 	go s.sessionMonitor()
 	go s.metricsCollector()
 	go s.trafficMonitor()
+	go s.watchPendingSessions()
 
 	log.Println("VPN Node Service started successfully")
 	return nil
@@ -191,17 +273,17 @@ func (s *Service) CreateSession(userID uuid.UUID, protocol string) (*models.Sess
 
 	// Create session
 	session := &models.Session{
-		UserID:             userID,
-		NodeID:             s.nodeID,
-		Protocol:           protocol,
-		TunnelIP:           tunnelIP,
-		PublicKey:          keyPair.PublicKey,
-		PrivateKey:         keyPair.PrivateKey, // Encrypted in production
-		Status:             "active",
-		ConnectedAt:        time.Now(),
-		LastKeepalive:      time.Now(),
-		KillSwitchEnabled:  true,
-		DNSLeakProtection:  true,
+		UserID:            userID,
+		NodeID:            s.nodeID,
+		Protocol:          protocol,
+		TunnelIP:          tunnelIP,
+		PublicKey:         keyPair.PublicKey,
+		PrivateKey:        keyPair.PrivateKey, // Encrypted in production
+		Status:            "active",
+		ConnectedAt:       time.Now(),
+		LastKeepalive:     time.Now(),
+		KillSwitchEnabled: true,
+		DNSLeakProtection: true,
 	}
 
 	if err := s.db.Create(session).Error; err != nil {
@@ -225,9 +307,10 @@ func (s *Service) CreateSession(userID uuid.UUID, protocol string) (*models.Sess
 
 	// Store in active sessions
 	s.activeSessions[session.ID] = &SessionInfo{
-		Session:       session,
-		PublicKey:     keyPair.PublicKey,
-		LastKeepalive: time.Now(),
+		Session:           session,
+		PublicKey:         keyPair.PublicKey,
+		LastKeepalive:     time.Now(),
+		LastEarningsFlush: time.Now(),
 	}
 
 	// Update metrics
@@ -250,6 +333,11 @@ func (s *Service) disconnectSession(sessionID uuid.UUID) error {
 	sessionInfo, ok := s.activeSessions[sessionID]
 	if !ok {
 		return fmt.Errorf("session not found")
+	}
+
+	// Flush remaining earnings
+	if sessionInfo.PendingBandwidthKB > 0 {
+		s.flushEarnings(sessionID, sessionInfo.PendingBandwidthKB)
 	}
 
 	// Remove peer from WireGuard
@@ -436,10 +524,55 @@ func (s *Service) updateTrafficStats() {
 
 	// Calculate total bytes from all peers
 	var totalBytesSent, totalBytesReceived int64
+
+	// Create map for peer stats
+	peerStats := make(map[string]wireguard.PeerStats)
+
 	for _, peer := range stats.Peers {
 		totalBytesSent += peer.BytesSent
 		totalBytesReceived += peer.BytesReceived
+		peerStats[peer.PublicKey] = peer
 	}
+
+	// Update per-session stats
+	s.mu.Lock()
+	for _, info := range s.activeSessions {
+		if peer, ok := peerStats[info.PublicKey]; ok {
+			// Initialize if first run (LastBytesSent == 0)
+			if info.LastBytesSent == 0 && info.LastBytesReceived == 0 {
+				info.LastBytesSent = peer.BytesSent
+				info.LastBytesReceived = peer.BytesReceived
+				info.BytesSent = peer.BytesSent
+				info.BytesReceived = peer.BytesReceived
+				continue
+			}
+
+			info.BytesSent = peer.BytesSent
+			info.BytesReceived = peer.BytesReceived
+
+			sentDelta := info.BytesSent - info.LastBytesSent
+			receivedDelta := info.BytesReceived - info.LastBytesReceived
+
+			if sentDelta > 0 || receivedDelta > 0 {
+				totalDeltaKB := (sentDelta + receivedDelta) / 1024
+				if totalDeltaKB > 0 {
+					info.PendingBandwidthKB += totalDeltaKB
+				}
+
+				info.LastBytesSent = info.BytesSent
+				info.LastBytesReceived = info.BytesReceived
+			}
+
+			// Flush if needed (every 10 mins)
+			if time.Since(info.LastEarningsFlush) > 10*time.Minute && info.PendingBandwidthKB > 0 {
+				// Run in goroutine to avoid blocking lock
+				go s.flushEarnings(info.Session.ID, info.PendingBandwidthKB)
+				info.PendingBandwidthKB = 0
+				info.LastEarningsFlush = time.Now()
+			}
+		}
+	}
+	s.mu.Unlock()
 
 	s.trafficMu.Lock()
 	now := time.Now()
@@ -502,4 +635,140 @@ func (s *Service) GetCurrentTrafficMbps() float64 {
 		return 0
 	}
 	return node.BandwidthUsageGbps * 1000.0 // Convert Gbps to Mbps
+}
+
+// flushEarnings records earnings for a session
+func (s *Service) flushEarnings(sessionID uuid.UUID, bandwidthKB int64) {
+	if err := s.rewardService.RecordEarning(context.Background(), sessionID, bandwidthKB, 10); err != nil {
+		log.Printf("Failed to record earnings for session %s: %v", sessionID, err)
+	}
+}
+
+func (s *Service) watchPendingSessions() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case <-ticker.C:
+			s.processPendingSessions()
+			s.processDisconnects()
+		}
+	}
+}
+
+func (s *Service) processDisconnects() {
+	var sessions []models.Session
+	if err := s.db.Where("node_id = ? AND status = ?", s.nodeID, "pending_disconnect").Find(&sessions).Error; err != nil {
+		return
+	}
+
+	for _, session := range sessions {
+		if err := s.DisconnectSession(session.ID); err != nil {
+			log.Printf("Failed to disconnect session %s: %v", session.ID, err)
+			// Force update status if session not found in memory (orphaned in DB)
+			if strings.Contains(err.Error(), "session not found") {
+				now := time.Now()
+				s.db.Model(&models.Session{}).Where("id = ?", session.ID).Updates(map[string]interface{}{
+					"status":          "disconnected",
+					"disconnected_at": &now,
+				})
+			}
+		}
+	}
+}
+
+func (s *Service) processPendingSessions() {
+	var sessions []models.Session
+	if err := s.db.Where("node_id = ? AND status = ?", s.nodeID, "pending").Find(&sessions).Error; err != nil {
+		log.Printf("Failed to fetch pending sessions: %v", err)
+		return
+	}
+
+	for _, session := range sessions {
+		// Pass a copy to avoid loop variable issues, though sessions[i] is safer
+		sess := session
+		if err := s.provisionSession(&sess); err != nil {
+			log.Printf("Failed to provision session %s: %v", sess.ID, err)
+			s.db.Model(&sess).Update("status", "failed")
+		}
+	}
+}
+
+func (s *Service) provisionSession(session *models.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check capacity
+	var node models.VPNNode
+	if err := s.db.First(&node, s.nodeID).Error; err != nil {
+		return err
+	}
+	if node.CurrentConnections >= node.MaxConnections {
+		return fmt.Errorf("node full")
+	}
+
+	// Generate keys
+	keyPair, err := wireguard.GenerateKeyPair()
+	if err != nil {
+		return err
+	}
+
+	// Allocate IP
+	var usedIPs []string
+	s.db.Model(&models.Session{}).
+		Where("node_id = ? AND status = ?", s.nodeID, "active").
+		Pluck("tunnel_ip", &usedIPs)
+
+	tunnelIP, err := wireguard.AllocateClientIP(node.InternalIP+"/24", usedIPs)
+	if err != nil {
+		return fmt.Errorf("failed to allocate IP: %w", err)
+	}
+
+	// Add peer to WireGuard
+	peer := wireguard.PeerConfig{
+		PublicKey:           keyPair.PublicKey,
+		AllowedIPs:          []string{tunnelIP},
+		PersistentKeepalive: 25,
+	}
+
+	if err := s.wgManager.AddPeer(peer); err != nil {
+		return err
+	}
+
+	// Update Session
+	updates := map[string]interface{}{
+		"public_key":     keyPair.PublicKey,
+		"private_key":    keyPair.PrivateKey, // Should be encrypted in production
+		"tunnel_ip":      tunnelIP,
+		"status":         "active",
+		"connected_at":   time.Now(),
+		"last_keepalive": time.Now(),
+	}
+
+	if err := s.db.Model(session).Updates(updates).Error; err != nil {
+		// Try rollback peer
+		s.wgManager.RemovePeer(keyPair.PublicKey)
+		return err
+	}
+
+	// Update node count
+	s.db.Model(&node).UpdateColumn("current_connections", gorm.Expr("current_connections + ?", 1))
+
+	// Track session
+	// Update session object with new values
+	session.PublicKey = keyPair.PublicKey
+	session.TunnelIP = tunnelIP
+
+	s.activeSessions[session.ID] = &SessionInfo{
+		Session:           session,
+		PublicKey:         keyPair.PublicKey,
+		LastKeepalive:     time.Now(),
+		LastEarningsFlush: time.Now(),
+	}
+
+	log.Printf("Provisioned session %s for user %s", session.ID, session.UserID)
+	return nil
 }

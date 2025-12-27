@@ -43,7 +43,8 @@ export interface OperatorStats {
   total_paid: number;
   active_nodes: number;
   total_sessions: number;
-  total_bandwidth_gb: number;
+  total_bandwidth_kb: number;
+  total_bandwidth_gb?: number; // Optional/Deprecated
   reputation_score: number;
   current_tier: string;
   monthly_earnings_estimate: number;
@@ -54,7 +55,8 @@ export interface Earning {
   operator_id: string;
   node_id: string;
   session_id: string;
-  bandwidth_gb: number;
+  bandwidth_kb: number;
+  bandwidth_gb?: number; // Optional/Deprecated
   duration_minutes: number;
   rate_per_gb: number;
   amount_usd: number;
@@ -105,7 +107,11 @@ export interface AuthContextType {
   isAuthenticated: boolean;
   isOperator: boolean;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, password: string, username: string) => Promise<void>;
+  register: (
+    email: string,
+    password: string,
+    username: string
+  ) => Promise<void>;
   logout: () => void;
   loading: boolean;
 }

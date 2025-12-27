@@ -14,18 +14,19 @@ Aureo VPN is a complete VPN solution featuring:
 
 ## ⚡ Quick Start
 
+For a complete production deployment guide, see [LAUNCH_GUIDE.md](LAUNCH_GUIDE.md).
+
 ```bash
 # Clone and setup
 git clone https://github.com/nikola43/aureo-vpn.git
 cd aureo-vpn
-make setup
 
-# Start with Docker
-make docker-up
+# Generate environment variables
+./scripts/generate-env.sh
 
-# Or build and run locally
-make build
-./bin/api-gateway
+# Start with Docker Compose
+cd deployments/docker
+docker-compose up -d --build
 ```
 
 ## ✨ Key Features

@@ -83,19 +83,21 @@ func main() {
 	// Initialize blockchain service (optional - can be nil for development)
 	// In production, configure with real RPC endpoints and private keys
 	var blockchainService *blockchain.Service
-	// Example configuration (commented out for security):
-	// blockchainCfg := blockchain.Config{
-	// 	EthereumRPCURL:     os.Getenv("ETHEREUM_RPC_URL"),
-	// 	EthereumPrivateKey: os.Getenv("ETHEREUM_PRIVATE_KEY"),
-	// 	EthereumChainID:    1, // Mainnet
-	// 	BitcoinRPCURL:      os.Getenv("BITCOIN_RPC_URL"),
-	// 	BitcoinRPCUser:     os.Getenv("BITCOIN_RPC_USER"),
-	// 	BitcoinRPCPassword: os.Getenv("BITCOIN_RPC_PASSWORD"),
-	// }
-	// blockchainService, err = blockchain.NewService(blockchainCfg, log)
-	// if err != nil {
-	// 	log.Warn("failed to initialize blockchain service, using mock mode", "error", err)
-	// }
+	blockchainCfg := blockchain.Config{
+		EthereumRPCURL:      cfg.Blockchain.EthereumRPCURL,
+		EthereumPrivateKey:  cfg.Blockchain.EthereumPrivateKey,
+		EthereumChainID:     cfg.Blockchain.EthereumChainID,
+		BitcoinRPCURL:       cfg.Blockchain.BitcoinRPCURL,
+		BitcoinRPCUser:      cfg.Blockchain.BitcoinRPCUser,
+		BitcoinRPCPassword:  cfg.Blockchain.BitcoinRPCPassword,
+		LitecoinRPCURL:      cfg.Blockchain.LitecoinRPCURL,
+		LitecoinRPCUser:     cfg.Blockchain.LitecoinRPCUser,
+		LitecoinRPCPassword: cfg.Blockchain.LitecoinRPCPassword,
+	}
+	blockchainService, err = blockchain.NewService(blockchainCfg, log)
+	if err != nil {
+		log.Warn("failed to initialize blockchain service, using mock mode", "error", err)
+	}
 
 	// Initialize reward service
 	rewardService := rewards.NewRewardService(log, blockchainService)
@@ -113,16 +115,16 @@ func main() {
 
 	// Create Fiber app with production configuration
 	app := fiber.New(fiber.Config{
-		AppName:               "Aureo VPN API Gateway v" + version,
-		ServerHeader:          "", // Hide server header for security
-		ErrorHandler:          customErrorHandler(log),
-		BodyLimit:             cfg.Server.BodyLimit,
-		ReadTimeout:           cfg.Server.ReadTimeout,
-		WriteTimeout:          cfg.Server.WriteTimeout,
-		IdleTimeout:           cfg.Server.IdleTimeout,
-		DisableStartupMessage: true, // We'll log our own message
+		AppName:                 "Aureo VPN API Gateway v" + version,
+		ServerHeader:            "", // Hide server header for security
+		ErrorHandler:            customErrorHandler(log),
+		BodyLimit:               cfg.Server.BodyLimit,
+		ReadTimeout:             cfg.Server.ReadTimeout,
+		WriteTimeout:            cfg.Server.WriteTimeout,
+		IdleTimeout:             cfg.Server.IdleTimeout,
+		DisableStartupMessage:   true, // We'll log our own message
 		EnableTrustedProxyCheck: len(cfg.Security.TrustedProxies) > 0,
-		TrustedProxies:        cfg.Security.TrustedProxies,
+		TrustedProxies:          cfg.Security.TrustedProxies,
 	})
 
 	// Global middleware
