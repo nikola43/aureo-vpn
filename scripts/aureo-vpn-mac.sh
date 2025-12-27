@@ -26,12 +26,13 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Configuration
-API_URL="${API_URL:-http://155.138.238.145}"
+API_URL="${API_URL:-http://136.244.70.78:8080}"
 CONFIG_DIR="$HOME/.aureo-vpn"
 SESSION_FILE="$CONFIG_DIR/.session"
 CONNECTION_FILE="$CONFIG_DIR/.connection"
 WG_CONFIG="$CONFIG_DIR/wg0.conf"
 WG_INTERFACE="wg-aureo"
+VERBOSE="${VERBOSE:-0}"
 
 # Create config directory
 mkdir -p "$CONFIG_DIR"
@@ -57,6 +58,8 @@ cmd_login() {
     echo -e "${CYAN}  Login${NC}"
     echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
+    echo -e "${CYAN}API: $API_URL${NC}"
+    echo ""
 
     read -p "$(echo -e ${CYAN}Email: ${NC})" EMAIL
     read -sp "$(echo -e ${CYAN}Password: ${NC})" PASSWORD
@@ -70,18 +73,41 @@ cmd_login() {
 
     echo -e "${CYAN}Logging in...${NC}"
 
-    RESPONSE=$(curl -s -X POST "$API_URL/api/v1/auth/login" \
+    # Make request and capture HTTP status code
+    HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$API_URL/api/v1/auth/login" \
         -H "Content-Type: application/json" \
         -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}")
 
-    if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
-        echo -e "${RED}✗ Login failed: $(echo "$RESPONSE" | jq -r '.error')${NC}"
+    # Extract body and status code
+    HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
+    HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tail -n1)
+
+    # Debug: show response if verbose
+    if [ "$VERBOSE" = "1" ]; then
+        echo -e "${YELLOW}HTTP Status: $HTTP_STATUS${NC}"
+        echo -e "${YELLOW}Response: $HTTP_BODY${NC}"
+    fi
+
+    # Check HTTP status
+    if [ "$HTTP_STATUS" != "200" ]; then
+        ERROR_MSG=$(echo "$HTTP_BODY" | jq -r '.error // .message // "Unknown error"' 2>/dev/null)
+        echo -e "${RED}✗ Login failed (HTTP $HTTP_STATUS): $ERROR_MSG${NC}"
+        if [ "$VERBOSE" = "1" ]; then
+            echo -e "${YELLOW}Full response: $HTTP_BODY${NC}"
+        fi
         exit 1
     fi
 
-    TOKEN=$(echo "$RESPONSE" | jq -r '.access_token // empty')
+    # Check for error in response body
+    if echo "$HTTP_BODY" | jq -e '.error' > /dev/null 2>&1; then
+        echo -e "${RED}✗ Login failed: $(echo "$HTTP_BODY" | jq -r '.error')${NC}"
+        exit 1
+    fi
+
+    TOKEN=$(echo "$HTTP_BODY" | jq -r '.access_token // empty')
     if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-        echo -e "${RED}✗ Login failed${NC}"
+        echo -e "${RED}✗ Login failed - no access token in response${NC}"
+        echo -e "${YELLOW}Response: $HTTP_BODY${NC}"
         exit 1
     fi
 
@@ -111,7 +137,7 @@ validate_token() {
     fi
 
     # Test token by making a simple API call
-    RESPONSE=$(curl -s -X GET "$API_URL/operator/nodes" \
+    RESPONSE=$(curl -s -X GET "$API_URL/api/v1/nodes" \
         -H "Authorization: Bearer $TOKEN")
 
     # Check if we got an error response
@@ -153,7 +179,7 @@ cmd_list() {
     echo -e "${CYAN}Available VPN Nodes:${NC}"
     echo ""
 
-    RESPONSE=$(curl -s -X GET "$API_URL/nodes" \
+    RESPONSE=$(curl -s -X GET "$API_URL/api/v1/nodes" \
         -H "Authorization: Bearer $TOKEN")
 
     if echo "$RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
@@ -245,10 +271,19 @@ cmd_connect() {
 
     # Register peer with API
     echo -e "${CYAN}Registering with VPN server...${NC}"
+
+    if [ "$VERBOSE" = "1" ]; then
+        echo -e "${YELLOW}Sending: node_id=$NODE_ID, public_key=$WG_PUBLIC${NC}"
+    fi
+
     REGISTER_RESPONSE=$(curl -s -X POST "$API_URL/api/v1/config/generate" \
         -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/json" \
         -d "{\"public_key\":\"$WG_PUBLIC\",\"node_id\":\"$NODE_ID\"}")
+
+    if [ "$VERBOSE" = "1" ]; then
+        echo -e "${YELLOW}Response: $REGISTER_RESPONSE${NC}"
+    fi
 
     # Check for errors
     if echo "$REGISTER_RESPONSE" | jq -e '.error' > /dev/null 2>&1; then
@@ -258,19 +293,25 @@ cmd_connect() {
     fi
 
     # Extract configuration from response
-    SERVER_PUBKEY=$(echo "$REGISTER_RESPONSE" | jq -r '.server_public_key')
-    SERVER_ENDPOINT=$(echo "$REGISTER_RESPONSE" | jq -r '.server_endpoint')
-    CLIENT_IP=$(echo "$REGISTER_RESPONSE" | jq -r '.client_ip')
-    DNS_SERVERS=$(echo "$REGISTER_RESPONSE" | jq -r '.dns')
+    SERVER_PUBKEY=$(echo "$REGISTER_RESPONSE" | jq -r '.server_public_key // empty')
+    SERVER_ENDPOINT=$(echo "$REGISTER_RESPONSE" | jq -r '.server_endpoint // empty')
+    CLIENT_IP=$(echo "$REGISTER_RESPONSE" | jq -r '.client_ip // empty')
+    DNS_SERVERS=$(echo "$REGISTER_RESPONSE" | jq -r '.dns // "1.1.1.1,8.8.8.8"')
 
     if [ -z "$SERVER_PUBKEY" ] || [ "$SERVER_PUBKEY" = "null" ]; then
         echo -e "${RED}✗ Failed to get configuration from server${NC}"
-        echo "$REGISTER_RESPONSE"
+        echo -e "${YELLOW}Response: $REGISTER_RESPONSE${NC}"
+        exit 1
+    fi
+
+    if [ -z "$SERVER_ENDPOINT" ]; then
+        echo -e "${RED}✗ Server endpoint not provided${NC}"
         exit 1
     fi
 
     echo -e "${GREEN}✓ Registered successfully${NC}"
     echo -e "${CYAN}  Your VPN IP: ${GREEN}$CLIENT_IP${NC}"
+    echo -e "${CYAN}  Server: ${GREEN}$SERVER_ENDPOINT${NC}"
 
     # Create WireGuard config
     cat > "$WG_CONFIG" << EOF
@@ -396,12 +437,19 @@ cmd_help() {
     echo "  status      - Show connection status"
     echo "  help        - Show this help"
     echo ""
+    echo "Environment Variables:"
+    echo "  API_URL     - API server URL (default: http://136.244.70.78)"
+    echo "  VERBOSE     - Set to 1 for debug output"
+    echo ""
     echo "Examples:"
-    echo "  $0 login              # Login first"
-    echo "  $0 list               # See available nodes"
-    echo "  $0 connect            # Connect to a node"
-    echo "  $0 status             # Check connection"
-    echo "  $0 disconnect         # Disconnect"
+    echo "  $0 login                          # Login first"
+    echo "  $0 list                           # See available nodes"
+    echo "  $0 connect                        # Connect to a node"
+    echo "  $0 status                         # Check connection"
+    echo "  $0 disconnect                     # Disconnect"
+    echo ""
+    echo "  API_URL=http://myserver:8080 $0 login   # Use custom API"
+    echo "  VERBOSE=1 $0 login                      # Debug mode"
     echo ""
 }
 

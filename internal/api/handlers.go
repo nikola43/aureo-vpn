@@ -1,7 +1,9 @@
 package api
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
@@ -783,11 +785,130 @@ func (h *Handlers) GetSession(c *fiber.Ctx) error {
 	return c.JSON(session)
 }
 
-// GenerateConfig generates VPN configuration
+// GenerateConfig generates VPN configuration for WireGuard peer registration
 func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
-	return c.Status(fiber.StatusNotImplemented).JSON(fiber.Map{
-		"error": "generate config is deprecated. please use create session flow.",
+	userID := c.Locals("user_id").(uuid.UUID)
+
+	var req struct {
+		NodeID    string `json:"node_id"`
+		PublicKey string `json:"public_key"`
+	}
+
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid request body",
+		})
+	}
+
+	if req.NodeID == "" || req.PublicKey == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "node_id and public_key are required",
+		})
+	}
+
+	nodeID, err := uuid.Parse(req.NodeID)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "invalid node_id",
+		})
+	}
+
+	db := database.GetDB()
+
+	// Get node details
+	var node models.VPNNode
+	if err := db.First(&node, nodeID).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+			"error": "node not found",
+		})
+	}
+
+	if node.Status != "online" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error": "node is not online",
+		})
+	}
+
+	// Check node capacity
+	if node.CurrentConnections >= node.MaxConnections {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "node at maximum capacity",
+		})
+	}
+
+	// Get used IPs for this node
+	var usedIPs []string
+	db.Model(&models.Session{}).
+		Where("node_id = ? AND status IN ?", nodeID, []string{"active", "pending"}).
+		Pluck("tunnel_ip", &usedIPs)
+
+	// Allocate client IP (simple allocation from the node's internal subnet)
+	clientIP := allocateClientIP(node.InternalIP, usedIPs)
+	if clientIP == "" {
+		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+			"error": "no available IP addresses",
+		})
+	}
+
+	// Create pending session with client's public key
+	session := models.Session{
+		UserID:            userID,
+		NodeID:            nodeID,
+		Protocol:          "wireguard",
+		PublicKey:         req.PublicKey,
+		TunnelIP:          clientIP,
+		ClientIP:          c.IP(),
+		Status:            "pending",
+		KillSwitchEnabled: true,
+		DNSLeakProtection: true,
+	}
+
+	if err := db.Create(&session).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "failed to create session",
+		})
+	}
+
+	// Return WireGuard configuration
+	// The VPN node will pick up this pending session and add the peer
+	serverEndpoint := fmt.Sprintf("%s:%d", node.PublicIP, node.WireGuardPort)
+	dns := "1.1.1.1,8.8.8.8"
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"session_id":        session.ID,
+		"server_public_key": node.PublicKey,
+		"server_endpoint":   serverEndpoint,
+		"client_ip":         clientIP,
+		"dns":               dns,
+		"allowed_ips":       "0.0.0.0/0",
+		"keepalive":         25,
 	})
+}
+
+// allocateClientIP allocates a client IP from the node's subnet
+func allocateClientIP(nodeIP string, usedIPs []string) string {
+	// Parse node IP to get the base network
+	// Assume /24 subnet, node uses .1, clients get .2-.254
+	parts := strings.Split(nodeIP, ".")
+	if len(parts) != 4 {
+		return ""
+	}
+
+	base := strings.Join(parts[:3], ".")
+	usedSet := make(map[string]bool)
+	for _, ip := range usedIPs {
+		usedSet[ip] = true
+	}
+
+	// Find first available IP (skip .1 which is the node)
+	for i := 2; i <= 254; i++ {
+		candidateIP := fmt.Sprintf("%s.%d", base, i)
+		if !usedSet[candidateIP] {
+			return candidateIP
+		}
+	}
+
+	return ""
 }
 
 // GetConfig returns a specific configuration

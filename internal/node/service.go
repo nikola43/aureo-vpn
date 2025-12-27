@@ -710,26 +710,38 @@ func (s *Service) provisionSession(session *models.Session) error {
 		return fmt.Errorf("node full")
 	}
 
-	// Generate keys
-	keyPair, err := wireguard.GenerateKeyPair()
-	if err != nil {
-		return err
+	// Use client's public key if provided, otherwise generate new keys
+	clientPublicKey := session.PublicKey
+	tunnelIP := session.TunnelIP
+
+	// If client didn't provide public key, generate keys server-side (legacy flow)
+	if clientPublicKey == "" {
+		keyPair, err := wireguard.GenerateKeyPair()
+		if err != nil {
+			return err
+		}
+		clientPublicKey = keyPair.PublicKey
+		// Store private key for legacy clients that need it
+		session.PrivateKey = keyPair.PrivateKey
 	}
 
-	// Allocate IP
-	var usedIPs []string
-	s.db.Model(&models.Session{}).
-		Where("node_id = ? AND status = ?", s.nodeID, "active").
-		Pluck("tunnel_ip", &usedIPs)
+	// Allocate IP if not already allocated
+	if tunnelIP == "" {
+		var usedIPs []string
+		s.db.Model(&models.Session{}).
+			Where("node_id = ? AND status = ?", s.nodeID, "active").
+			Pluck("tunnel_ip", &usedIPs)
 
-	tunnelIP, err := wireguard.AllocateClientIP(node.InternalIP+"/24", usedIPs)
-	if err != nil {
-		return fmt.Errorf("failed to allocate IP: %w", err)
+		var err error
+		tunnelIP, err = wireguard.AllocateClientIP(node.InternalIP+"/24", usedIPs)
+		if err != nil {
+			return fmt.Errorf("failed to allocate IP: %w", err)
+		}
 	}
 
-	// Add peer to WireGuard
+	// Add peer to WireGuard with client's public key
 	peer := wireguard.PeerConfig{
-		PublicKey:           keyPair.PublicKey,
+		PublicKey:           clientPublicKey,
 		AllowedIPs:          []string{tunnelIP},
 		PersistentKeepalive: 25,
 	}
@@ -740,17 +752,21 @@ func (s *Service) provisionSession(session *models.Session) error {
 
 	// Update Session
 	updates := map[string]interface{}{
-		"public_key":     keyPair.PublicKey,
-		"private_key":    keyPair.PrivateKey, // Should be encrypted in production
+		"public_key":     clientPublicKey,
 		"tunnel_ip":      tunnelIP,
 		"status":         "active",
 		"connected_at":   time.Now(),
 		"last_keepalive": time.Now(),
 	}
 
+	// Only set private key if it was generated server-side
+	if session.PrivateKey != "" {
+		updates["private_key"] = session.PrivateKey
+	}
+
 	if err := s.db.Model(session).Updates(updates).Error; err != nil {
 		// Try rollback peer
-		s.wgManager.RemovePeer(keyPair.PublicKey)
+		s.wgManager.RemovePeer(clientPublicKey)
 		return err
 	}
 
@@ -759,12 +775,12 @@ func (s *Service) provisionSession(session *models.Session) error {
 
 	// Track session
 	// Update session object with new values
-	session.PublicKey = keyPair.PublicKey
+	session.PublicKey = clientPublicKey
 	session.TunnelIP = tunnelIP
 
 	s.activeSessions[session.ID] = &SessionInfo{
 		Session:           session,
-		PublicKey:         keyPair.PublicKey,
+		PublicKey:         clientPublicKey,
 		LastKeepalive:     time.Now(),
 		LastEarningsFlush: time.Now(),
 	}

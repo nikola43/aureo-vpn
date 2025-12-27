@@ -26,7 +26,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Configuration
-API_URL="${API_URL:-http://155.138.238.145:8080/api/v1}"
+API_URL="${API_URL:-http://136.244.70.78:8080/api/v1}"
 CONFIG_DIR="/tmp/.aureo-vpn-$USER"
 SESSION_FILE="$CONFIG_DIR/.session"
 CONNECTION_FILE="$CONFIG_DIR/.connection"

@@ -38,7 +38,7 @@ fi
 # Get server endpoint (node's public IP)
 SERVER_IP=$(docker exec aureo-vpn-db psql -U postgres -d aureo_vpn -t -c "SELECT public_ip FROM vpn_nodes WHERE status='online' LIMIT 1;" 2>/dev/null | tr -d ' ')
 if [ -z "$SERVER_IP" ]; then
-    SERVER_IP="155.138.238.145"  # Fallback to known IP
+    SERVER_IP="136.244.70.78"  # Fallback to known IP
 fi
 
 SERVER_PORT="51820"
