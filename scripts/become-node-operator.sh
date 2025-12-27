@@ -384,6 +384,9 @@ ETHEREUM_PRIVATE_KEY=$ETH_PRIVATE_KEY
 # Environment
 ENVIRONMENT=production
 
+# CORS Configuration
+CORS_ALLOWED_ORIGINS=*
+
 # Node ID (will be set after registration)
 NODE_ID_1=
 EOF

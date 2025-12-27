@@ -45,6 +45,7 @@ type NodeCreateRequest struct {
 	Name             string  `json:"name" validate:"required,min=3,max=100"`
 	Hostname         string  `json:"hostname" validate:"required"`
 	PublicIP         string  `json:"public_ip" validate:"required,ip"`
+	InternalIP       string  `json:"internal_ip,omitempty"`
 	Country          string  `json:"country" validate:"required"`
 	CountryCode      string  `json:"country_code" validate:"required,len=2"`
 	City             string  `json:"city" validate:"required"`
@@ -126,11 +127,21 @@ func (s *Service) CreateNode(ctx context.Context, operatorID uuid.UUID, req Node
 		return nil, "", apperrors.ErrInternal.WithInternal(fmt.Errorf("failed to generate WireGuard keypair: %w", err))
 	}
 
+	// Use provided internal IP or generate a unique one for the WireGuard network
+	internalIP := req.InternalIP
+	if internalIP == "" {
+		// Count existing nodes for this operator to generate unique subnet
+		var nodeCount int64
+		s.db.Model(&models.VPNNode{}).Where("operator_id = ?", operatorID).Count(&nodeCount)
+		internalIP = fmt.Sprintf("10.%d.%d.1", (nodeCount/254)+1, (nodeCount%254)+1)
+	}
+
 	// Create node
 	node := &models.VPNNode{
 		Name:                req.Name,
 		Hostname:            req.Hostname,
 		PublicIP:            req.PublicIP,
+		InternalIP:          internalIP,
 		Country:             req.Country,
 		CountryCode:         req.CountryCode,
 		City:                req.City,
