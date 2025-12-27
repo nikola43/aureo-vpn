@@ -62,6 +62,20 @@ func (p *PasswordHasher) HashPassword(password string) (string, error) {
 	return encodedHash, nil
 }
 
+// HashPassword is a convenience function that creates a hasher and hashes the password
+func HashPassword(password string) (string, error) {
+	return NewPasswordHasher().HashPassword(password)
+}
+
+// CheckPassword is a convenience function that verifies a password against a hash
+func CheckPassword(password, hash string) bool {
+	match, err := NewPasswordHasher().VerifyPassword(password, hash)
+	if err != nil {
+		return false
+	}
+	return match
+}
+
 // VerifyPassword verifies a password against a hash
 func (p *PasswordHasher) VerifyPassword(password, encodedHash string) (bool, error) {
 	// Parse the encoded hash

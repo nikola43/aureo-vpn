@@ -219,7 +219,7 @@ export const Dashboard: React.FC = () => {
           {/* Stats Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-6 mb-8">
             {/* Total Earned */}
-            <div className="group relative backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl shadow-xl overflow-hidden hover:scale-105 transition-all duration-300">
+            <div className="group relative backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl shadow-xl overflow-hidden hover:scale-105 transition-all duration-300 min-h-[140px]">
               <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent pointer-events-none"></div>
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
@@ -230,6 +230,7 @@ export const Dashboard: React.FC = () => {
                     <p className="text-3xl font-bold text-white mt-2">
                       ${(stats.total_earned || 0).toFixed(2)}
                     </p>
+                    <p className="text-xs text-white/60 mt-1">lifetime earnings</p>
                   </div>
                   <div className="bg-gradient-to-br from-green-400 to-green-600 p-4 rounded-2xl shadow-lg">
                     <DollarSign className="h-7 w-7 text-white" />
@@ -240,7 +241,7 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {/* Pending Payout */}
-            <div className="group relative backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl shadow-xl overflow-hidden hover:scale-105 transition-all duration-300">
+            <div className="group relative backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl shadow-xl overflow-hidden hover:scale-105 transition-all duration-300 min-h-[140px]">
               <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent pointer-events-none"></div>
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
@@ -251,13 +252,7 @@ export const Dashboard: React.FC = () => {
                     <p className="text-3xl font-bold text-white mt-2">
                       ${(stats.pending_payout || 0).toFixed(4)}
                     </p>
-                    <button
-                      onClick={handleRequestPayout}
-                      disabled={(stats.pending_payout || 0) < 10}
-                      className="mt-3 px-4 py-1.5 bg-white/10 hover:bg-white/20 border border-white/30 rounded-lg text-xs text-white font-medium transition-all duration-300 disabled:opacity-40 disabled:cursor-not-allowed hover:scale-105 active:scale-95"
-                    >
-                      Request Payout →
-                    </button>
+                    <p className="text-xs text-white/60 mt-1">Min $10 for auto-payout</p>
                   </div>
                   <div className="bg-gradient-to-br from-blue-400 to-blue-600 p-4 rounded-2xl shadow-lg">
                     <Wallet className="h-7 w-7 text-white" />
@@ -268,7 +263,7 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {/* Active Nodes */}
-            <div className="group relative backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl shadow-xl overflow-hidden hover:scale-105 transition-all duration-300">
+            <div className="group relative backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl shadow-xl overflow-hidden hover:scale-105 transition-all duration-300 min-h-[140px]">
               <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent pointer-events-none"></div>
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
@@ -279,6 +274,7 @@ export const Dashboard: React.FC = () => {
                     <p className="text-3xl font-bold text-white mt-2">
                       {stats.active_nodes}
                     </p>
+                    <p className="text-xs text-white/60 mt-1">of {stats.total_nodes || stats.active_nodes} total</p>
                   </div>
                   <div className="bg-gradient-to-br from-purple-400 to-purple-600 p-4 rounded-2xl shadow-lg">
                     <Server className="h-7 w-7 text-white" />
@@ -289,7 +285,7 @@ export const Dashboard: React.FC = () => {
             </div>
 
             {/* Reputation */}
-            <div className="group relative backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl shadow-xl overflow-hidden hover:scale-105 transition-all duration-300">
+            <div className="group relative backdrop-blur-xl bg-white/10 border border-white/20 rounded-2xl shadow-xl overflow-hidden hover:scale-105 transition-all duration-300 min-h-[140px]">
               <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent pointer-events-none"></div>
               <div className="relative p-6">
                 <div className="flex items-center justify-between">
@@ -301,7 +297,7 @@ export const Dashboard: React.FC = () => {
                       {(stats.reputation_score || 0).toFixed(1)}
                     </p>
                     <div
-                      className={`mt-3 inline-flex items-center px-3 py-1.5 rounded-full bg-gradient-to-r ${getTierColor(
+                      className={`mt-1 inline-flex items-center px-3 py-1 rounded-full bg-gradient-to-r ${getTierColor(
                         stats.current_tier || "bronze"
                       )} text-white text-xs font-bold shadow-lg`}
                     >

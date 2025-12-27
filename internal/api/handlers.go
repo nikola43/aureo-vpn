@@ -13,12 +13,14 @@ import (
 	"github.com/nikola43/aureo-vpn/pkg/metrics"
 	"github.com/nikola43/aureo-vpn/pkg/models"
 	"github.com/nikola43/aureo-vpn/pkg/operator"
+	"github.com/nikola43/aureo-vpn/pkg/p2p"
 )
 
 // Handlers holds all API handlers
 type Handlers struct {
 	authService     *auth.Service
 	operatorService *operator.Service
+	p2pClient       *p2p.Client
 }
 
 // NewHandlers creates new API handlers
@@ -27,6 +29,20 @@ func NewHandlers(authService *auth.Service, operatorService *operator.Service) *
 		authService:     authService,
 		operatorService: operatorService,
 	}
+}
+
+// NewHandlersWithP2P creates new API handlers with P2P client
+func NewHandlersWithP2P(authService *auth.Service, operatorService *operator.Service, p2pClient *p2p.Client) *Handlers {
+	return &Handlers{
+		authService:     authService,
+		operatorService: operatorService,
+		p2pClient:       p2pClient,
+	}
+}
+
+// SetP2PClient sets the P2P client for decentralized node discovery
+func (h *Handlers) SetP2PClient(client *p2p.Client) {
+	h.p2pClient = client
 }
 
 // Register handles user registration
@@ -115,18 +131,63 @@ func (h *Handlers) GetProfile(c *fiber.Ctx) error {
 }
 
 // ListNodes returns all available VPN nodes
+// Uses P2P discovery when available, falls back to database
 func (h *Handlers) ListNodes(c *fiber.Ctx) error {
+	country := c.Query("country")
+	protocol := c.Query("protocol")
+	source := c.Query("source", "auto") // "p2p", "db", or "auto"
+
+	// Try P2P first if available and not explicitly requesting DB
+	if h.p2pClient != nil && source != "db" {
+		p2pNodes := h.p2pClient.QueryNodes(protocol, country)
+		if len(p2pNodes) > 0 || source == "p2p" {
+			// Convert P2P nodes to response format
+			nodes := make([]fiber.Map, len(p2pNodes))
+			for i, n := range p2pNodes {
+				nodes[i] = fiber.Map{
+					"id":                   n.ID,
+					"name":                 n.Name,
+					"public_ip":            n.PublicIP,
+					"country":              n.Country,
+					"country_code":         n.CountryCode,
+					"city":                 n.City,
+					"wireguard_port":       n.WireGuardPort,
+					"openvpn_port":         n.OpenVPNPort,
+					"public_key":           n.PublicKey,
+					"max_connections":      n.MaxConnections,
+					"current_connections":  n.CurrentConnections,
+					"load_score":           n.LoadScore,
+					"status":               n.Status,
+					"supports_wireguard":   n.SupportsWireGuard,
+					"supports_openvpn":     n.SupportsOpenVPN,
+					"supports_multihop":    n.SupportsMultiHop,
+					"supports_obfuscation": n.SupportsObfuscation,
+					"is_operator_owned":    n.IsOperatorOwned,
+					"reputation":           n.Reputation,
+					"last_heartbeat":       n.LastHeartbeat,
+				}
+			}
+
+			return c.JSON(fiber.Map{
+				"nodes":  nodes,
+				"count":  len(nodes),
+				"source": "p2p",
+			})
+		}
+	}
+
+	// Fall back to database
 	db := database.GetDB()
 
 	var nodes []models.VPNNode
 	query := db.Where("is_active = ? AND status = ?", true, "online")
 
 	// Optional filters
-	if country := c.Query("country"); country != "" {
+	if country != "" {
 		query = query.Where("country_code = ?", country)
 	}
 
-	if protocol := c.Query("protocol"); protocol != "" {
+	if protocol != "" {
 		if protocol == "wireguard" {
 			query = query.Where("supports_wireguard = ?", true)
 		} else if protocol == "openvpn" {
@@ -142,17 +203,54 @@ func (h *Handlers) ListNodes(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(fiber.Map{
-		"nodes": nodes,
-		"count": len(nodes),
+		"nodes":  nodes,
+		"count":  len(nodes),
+		"source": "database",
 	})
 }
 
 // GetBestNode returns the best available node based on load and latency
+// Uses P2P discovery when available, falls back to database
 func (h *Handlers) GetBestNode(c *fiber.Ctx) error {
-	db := database.GetDB()
-
 	protocol := c.Query("protocol", "wireguard")
 	country := c.Query("country")
+	source := c.Query("source", "auto")
+
+	// Try P2P first if available
+	if h.p2pClient != nil && source != "db" {
+		node := h.p2pClient.GetBestNode(protocol, country)
+		if node != nil {
+			return c.JSON(fiber.Map{
+				"id":                   node.ID,
+				"name":                 node.Name,
+				"public_ip":            node.PublicIP,
+				"country":              node.Country,
+				"country_code":         node.CountryCode,
+				"city":                 node.City,
+				"wireguard_port":       node.WireGuardPort,
+				"openvpn_port":         node.OpenVPNPort,
+				"public_key":           node.PublicKey,
+				"max_connections":      node.MaxConnections,
+				"current_connections":  node.CurrentConnections,
+				"load_score":           node.LoadScore,
+				"status":               node.Status,
+				"supports_wireguard":   node.SupportsWireGuard,
+				"supports_openvpn":     node.SupportsOpenVPN,
+				"is_operator_owned":    node.IsOperatorOwned,
+				"reputation":           node.Reputation,
+				"last_heartbeat":       node.LastHeartbeat,
+				"source":               "p2p",
+			})
+		}
+		if source == "p2p" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "no nodes found via P2P",
+			})
+		}
+	}
+
+	// Fall back to database
+	db := database.GetDB()
 
 	query := db.Where("is_active = ? AND status = ?", true, "online")
 
@@ -231,6 +329,41 @@ func (h *Handlers) HealthCheck(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{
 		"status":   "healthy",
 		"database": "connected",
+	})
+}
+
+// GetP2PStatus returns the P2P network status
+func (h *Handlers) GetP2PStatus(c *fiber.Ctx) error {
+	if h.p2pClient == nil {
+		return c.JSON(fiber.Map{
+			"enabled": false,
+			"message": "P2P is not enabled on this API gateway",
+		})
+	}
+
+	stats := h.p2pClient.GetStats()
+	return c.JSON(fiber.Map{
+		"enabled":         true,
+		"peer_id":         stats["peer_id"],
+		"connected_peers": stats["connected_peers"],
+		"known_nodes":     stats["known_nodes"],
+		"active_nodes":    stats["active_nodes"],
+		"countries":       stats["countries"],
+	})
+}
+
+// GetP2PCountries returns countries with active P2P nodes
+func (h *Handlers) GetP2PCountries(c *fiber.Ctx) error {
+	if h.p2pClient == nil {
+		return c.JSON(fiber.Map{
+			"countries": []string{},
+			"source":    "disabled",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"countries": h.p2pClient.GetCountries(),
+		"source":    "p2p",
 	})
 }
 

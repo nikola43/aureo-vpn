@@ -15,6 +15,7 @@ import (
 	"github.com/nikola43/aureo-vpn/pkg/logger"
 	"github.com/nikola43/aureo-vpn/pkg/metrics"
 	"github.com/nikola43/aureo-vpn/pkg/models"
+	"github.com/nikola43/aureo-vpn/pkg/p2p"
 	"github.com/nikola43/aureo-vpn/pkg/protocols/wireguard"
 	"github.com/nikola43/aureo-vpn/pkg/rewards"
 	"gorm.io/gorm"
@@ -26,6 +27,8 @@ type Service struct {
 	db             *gorm.DB
 	wgManager      *wireguard.Manager
 	rewardService  *rewards.RewardService
+	p2pHost        *p2p.Host
+	p2pConfig      p2p.ServiceConfig
 	activeSessions map[uuid.UUID]*SessionInfo
 	mu             sync.RWMutex
 	ctx            context.Context
@@ -53,6 +56,11 @@ type SessionInfo struct {
 
 // NewService creates a new VPN node service
 func NewService(nodeID uuid.UUID) *Service {
+	return NewServiceWithP2P(nodeID, p2p.DefaultServiceConfig())
+}
+
+// NewServiceWithP2P creates a new VPN node service with P2P configuration
+func NewServiceWithP2P(nodeID uuid.UUID, p2pConfig p2p.ServiceConfig) *Service {
 	ctx, cancel := context.WithCancel(context.Background())
 	log := logger.NewDefault()
 	// Initialize blockchain service (with empty config for now as we don't have env vars handy here,
@@ -60,11 +68,14 @@ func NewService(nodeID uuid.UUID) *Service {
 	blockchainService, _ := blockchain.NewService(blockchain.Config{}, log)
 	rewardService := rewards.NewRewardService(log, blockchainService)
 
+	p2pConfig.NodeID = nodeID
+
 	return &Service{
 		nodeID:         nodeID,
 		db:             database.GetDB(),
 		wgManager:      wireguard.NewManager("wg0"),
 		rewardService:  rewardService,
+		p2pConfig:      p2pConfig,
 		activeSessions: make(map[uuid.UUID]*SessionInfo),
 		ctx:            ctx,
 		cancel:         cancel,
@@ -186,6 +197,11 @@ func (s *Service) Start() error {
 		return fmt.Errorf("failed to setup WireGuard: %w", err)
 	}
 
+	// Initialize P2P network
+	if err := s.initP2P(&node); err != nil {
+		log.Printf("Warning: P2P initialization failed: %v (continuing without P2P)", err)
+	}
+
 	// Restore active sessions
 	if err := s.loadActiveSessions(); err != nil {
 		log.Printf("Failed to restore active sessions: %v", err)
@@ -202,10 +218,60 @@ func (s *Service) Start() error {
 	return nil
 }
 
+// initP2P initializes the P2P network
+func (s *Service) initP2P(node *models.VPNNode) error {
+	log.Println("Initializing P2P network...")
+
+	// Build P2P config
+	config := s.p2pConfig.BuildConfig()
+
+	// Create P2P host
+	host, err := p2p.NewHost(config)
+	if err != nil {
+		return fmt.Errorf("failed to create P2P host: %w", err)
+	}
+	s.p2pHost = host
+
+	// Set local node info
+	nodeInfo := p2p.NodeInfoFromModel(node, s.p2pConfig.ListenPort)
+	nodeInfo.Status = "online"
+	host.SetLocalNode(nodeInfo)
+
+	// Set callbacks for node events
+	host.SetCallbacks(
+		func(n *p2p.NodeInfo) {
+			log.Printf("[P2P] Node joined: %s (%s)", n.Name, n.ID)
+		},
+		func(n *p2p.NodeInfo) {
+			// Node updated - could sync to local cache if needed
+		},
+		func(id uuid.UUID) {
+			log.Printf("[P2P] Node left: %s", id)
+		},
+	)
+
+	// Start P2P service
+	if err := host.Start(); err != nil {
+		return fmt.Errorf("failed to start P2P: %w", err)
+	}
+
+	log.Printf("[P2P] Node ID: %s", host.GetPeerID())
+	log.Printf("[P2P] Multiaddrs: %v", host.GetMultiaddrs())
+
+	return nil
+}
+
 // Stop stops the VPN node service
 func (s *Service) Stop() error {
 	log.Println("Stopping VPN Node Service...")
 	s.cancel()
+
+	// Stop P2P network
+	if s.p2pHost != nil {
+		if err := s.p2pHost.Stop(); err != nil {
+			log.Printf("Error stopping P2P: %v", err)
+		}
+	}
 
 	// Disconnect all sessions
 	s.mu.Lock()
@@ -400,6 +466,21 @@ func (s *Service) sendHeartbeat() {
 	if err := s.db.Model(&models.VPNNode{}).Where("id = ?", s.nodeID).Updates(updates).Error; err != nil {
 		log.Printf("Failed to send heartbeat: %v", err)
 		return
+	}
+
+	// Update P2P network with current status
+	if s.p2pHost != nil {
+		var node models.VPNNode
+		if err := s.db.First(&node, s.nodeID).Error; err == nil {
+			s.p2pHost.UpdateLocalNode(
+				"online",
+				peerCount,
+				node.LoadScore,
+				node.CPUUsage,
+				node.MemoryUsage,
+				node.BandwidthUsageGbps,
+			)
+		}
 	}
 
 	// Update operator stats (pending payout, etc.) every heartbeat
@@ -787,4 +868,37 @@ func (s *Service) provisionSession(session *models.Session) error {
 
 	log.Printf("Provisioned session %s for user %s", session.ID, session.UserID)
 	return nil
+}
+
+// GetP2PHost returns the P2P host (for API integration)
+func (s *Service) GetP2PHost() *p2p.Host {
+	return s.p2pHost
+}
+
+// GetDiscoveredNodes returns nodes discovered via P2P
+func (s *Service) GetDiscoveredNodes() []*p2p.NodeInfo {
+	if s.p2pHost == nil {
+		return nil
+	}
+	return s.p2pHost.GetRegistry().GetActiveNodes()
+}
+
+// GetP2PStats returns P2P network statistics
+func (s *Service) GetP2PStats() map[string]interface{} {
+	if s.p2pHost == nil {
+		return map[string]interface{}{
+			"enabled": false,
+		}
+	}
+
+	registry := s.p2pHost.GetRegistry()
+	return map[string]interface{}{
+		"enabled":         true,
+		"peer_id":         s.p2pHost.GetPeerID().String(),
+		"multiaddrs":      s.p2pHost.GetMultiaddrs(),
+		"connected_peers": s.p2pHost.ConnectedPeers(),
+		"known_nodes":     registry.Count(),
+		"active_nodes":    registry.ActiveCount(),
+		"countries":       registry.GetCountries(),
+	}
 }
