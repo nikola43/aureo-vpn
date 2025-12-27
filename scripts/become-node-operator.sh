@@ -1107,25 +1107,46 @@ deploy_system_base_services() {
 deploy_docker_base_services() {
     section "🐳 Deploying Docker Services"
 
-    cd "$PROJECT_ROOT"
+    # Change to the docker directory so docker-compose can read the .env file
+    cd "$PROJECT_ROOT/deployments/docker"
 
     echo -e "${YELLOW}Building and starting containers...${NC}"
 
+    # Verify .env file exists
+    if [ ! -f ".env" ]; then
+        echo -e "${RED}✗ .env file not found in $(pwd)${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}✓ Environment file found${NC}"
+
+    # Show environment variables being used (without secrets)
+    echo -e "${CYAN}Using environment:${NC}"
+    echo "  - JWT_SECRET: [SET]"
+    echo "  - ETHEREUM_RPC_URL: $(grep ETHEREUM_RPC_URL .env | cut -d= -f2)"
+    echo "  - ETHEREUM_PRIVATE_KEY: [SET]"
+    echo ""
+
     # Stop any existing containers
-    $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" down 2>/dev/null || true
+    $DOCKER_COMPOSE down 2>/dev/null || true
 
     # Start only base services (postgres, redis, api, dashboard, control, prometheus, grafana)
-    $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" up -d --build postgres redis api-gateway control-server dashboard prometheus grafana
+    $DOCKER_COMPOSE up -d --build postgres redis api-gateway control-server dashboard prometheus grafana
 
     echo -e "${YELLOW}Waiting for services to be ready...${NC}"
     sleep 15
 
     # Check services are running
-    if ! $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" ps | grep -q "Up"; then
+    if ! $DOCKER_COMPOSE ps | grep -q "Up"; then
         echo -e "${RED}✗ Services failed to start${NC}"
-        echo -e "${YELLOW}Check logs with: $DOCKER_COMPOSE -f $DOCKER_COMPOSE_FILE logs${NC}"
+        echo -e "${YELLOW}Check logs with: $DOCKER_COMPOSE logs${NC}"
+        echo ""
+        echo -e "${YELLOW}API container logs:${NC}"
+        docker logs aureo-vpn-api --tail 30 2>&1 || true
         exit 1
     fi
+
+    # Change back to project root
+    cd "$PROJECT_ROOT"
 
     echo -e "${GREEN}✓ Docker services deployed successfully${NC}"
 }
@@ -1201,16 +1222,22 @@ EOF
 
 # Deploy VPN node for Docker mode
 deploy_docker_vpn_node() {
-    cd "$PROJECT_ROOT"
+    # Change to the docker directory
+    cd "$PROJECT_ROOT/deployments/docker"
 
-    # Create/update .env file with NODE_ID
-    mkdir -p "$PROJECT_ROOT/deployments/docker"
-    echo "NODE_ID_1=$NODE_ID" > "$PROJECT_ROOT/deployments/docker/.env"
+    # Update .env file with NODE_ID (append/update, don't overwrite)
+    if grep -q "^NODE_ID_1=" .env 2>/dev/null; then
+        # Update existing NODE_ID_1
+        sed -i "s/^NODE_ID_1=.*/NODE_ID_1=$NODE_ID/" .env
+    else
+        # Append NODE_ID_1
+        echo "NODE_ID_1=$NODE_ID" >> .env
+    fi
 
     echo -e "${YELLOW}Starting VPN node with NODE_ID: $NODE_ID${NC}"
 
     # Start VPN node container
-    $DOCKER_COMPOSE -f "$DOCKER_COMPOSE_FILE" up -d --build vpn-node-1
+    $DOCKER_COMPOSE up -d --build vpn-node-1
 
     echo -e "${YELLOW}Waiting for VPN node to initialize...${NC}"
     sleep 10
@@ -1219,8 +1246,12 @@ deploy_docker_vpn_node() {
     if ! docker ps | grep -q "aureo-vpn-node-1"; then
         echo -e "${RED}✗ VPN node failed to start${NC}"
         echo -e "${YELLOW}Check logs: docker logs aureo-vpn-node-1${NC}"
+        docker logs aureo-vpn-node-1 --tail 30 2>&1 || true
         exit 1
     fi
+
+    # Change back to project root
+    cd "$PROJECT_ROOT"
 
     echo -e "${GREEN}✓ VPN node deployed successfully${NC}"
 }
@@ -1538,28 +1569,70 @@ create_operator_account() {
 
     API_URL="http://localhost:8080"
 
-    # Wait for API to be ready
+    # Wait for API to be ready with extended timeout
     echo -e "\n${BLUE}Waiting for API to be ready...${NC}"
-    for i in {1..30}; do
-        if curl -sf "$API_URL/health" >/dev/null 2>&1; then
-            echo -e "${GREEN}✓ API is ready${NC}"
+    API_READY=false
+    for i in {1..60}; do
+        # Check health endpoint
+        HEALTH_RESPONSE=$(curl -s --max-time 5 "$API_URL/health" 2>&1)
+        if [ $? -eq 0 ] && [ -n "$HEALTH_RESPONSE" ]; then
+            API_READY=true
+            echo -e "\n${GREEN}✓ API is ready${NC}"
             break
         fi
         echo -n "."
-        sleep 1
+        sleep 2
     done
-    echo ""
+
+    if [ "$API_READY" = false ]; then
+        echo -e "\n${RED}✗ API failed to start within timeout${NC}"
+        echo -e "${YELLOW}Checking API container logs...${NC}"
+        echo ""
+        docker logs aureo-vpn-api --tail 50 2>&1 | tail -30
+        echo ""
+        echo -e "${YELLOW}Try running: docker logs aureo-vpn-api${NC}"
+        exit 1
+    fi
+
+    # Additional wait for database migrations to complete
+    echo -e "${CYAN}Waiting for database to be ready...${NC}"
+    sleep 5
 
     # Register user
     echo -e "${BLUE}Registering user account...${NC}"
 
-    REGISTER_RESPONSE=$(curl -sf -X POST "$API_URL/api/v1/auth/register" \
+    # Use verbose curl to see what's happening
+    REGISTER_RESPONSE=$(curl -s --max-time 30 -X POST "$API_URL/api/v1/auth/register" \
         -H "Content-Type: application/json" \
         -d "{
             \"email\": \"$EMAIL\",
             \"password\": \"$PASSWORD\",
             \"username\": \"$USERNAME\"
-        }" || echo '{"error": "Connection failed"}')
+        }" 2>&1)
+
+    CURL_EXIT_CODE=$?
+
+    # Debug output
+    if [ $CURL_EXIT_CODE -ne 0 ]; then
+        echo -e "${RED}✗ curl failed with exit code: $CURL_EXIT_CODE${NC}"
+        echo -e "${YELLOW}Checking API container status...${NC}"
+        docker ps | grep aureo-vpn-api
+        echo ""
+        echo -e "${YELLOW}API container logs:${NC}"
+        docker logs aureo-vpn-api --tail 30 2>&1
+        exit 1
+    fi
+
+    # Check if response is empty
+    if [ -z "$REGISTER_RESPONSE" ]; then
+        echo -e "${RED}✗ Empty response from API${NC}"
+        echo -e "${YELLOW}API container logs:${NC}"
+        docker logs aureo-vpn-api --tail 30 2>&1
+        exit 1
+    fi
+
+    # Debug: show response
+    echo -e "${CYAN}API Response: $REGISTER_RESPONSE${NC}"
 
     ACCESS_TOKEN=$(echo "$REGISTER_RESPONSE" | jq -r '.access_token // empty' 2>/dev/null)
 
@@ -1569,6 +1642,11 @@ create_operator_account() {
         echo -e "${RED}✗ Failed to create user account${NC}"
         ERROR_MSG=$(echo "$REGISTER_RESPONSE" | jq -r '.error // .message // "Unknown error"' 2>/dev/null)
         echo "Error: $ERROR_MSG"
+        echo ""
+        echo -e "${YELLOW}Full response: $REGISTER_RESPONSE${NC}"
+        echo ""
+        echo -e "${YELLOW}Checking API logs for errors...${NC}"
+        docker logs aureo-vpn-api --tail 20 2>&1
         exit 1
     fi
 
