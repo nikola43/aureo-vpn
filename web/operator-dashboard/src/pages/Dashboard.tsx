@@ -67,25 +67,6 @@ export const Dashboard: React.FC = () => {
     }
   };
 
-  const _handleRequestPayout = async () => {
-    if (!data?.stats.pending_payout || data.stats.pending_payout < 10) {
-      alert("Minimum payout amount is $10");
-      return;
-    }
-
-    if (!confirm("Request payout? This will process your pending balance.")) {
-      return;
-    }
-
-    try {
-      await api.requestPayout();
-      alert("Payout requested successfully! Processing may take 24-48 hours.");
-      loadDashboard();
-    } catch (err: any) {
-      alert(err.response?.data?.error || "Failed to request payout");
-    }
-  };
-
   if (loading) {
     return (
       <div className="min-h-screen relative overflow-hidden flex items-center justify-center">

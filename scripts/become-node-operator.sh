@@ -1752,14 +1752,39 @@ EOF
 register_node() {
     section "🖥️  Registering Your VPN Node"
 
-    # Auto-detect information
-    PUBLIC_IP=$(curl -s https://api.ipify.org || echo "127.0.0.1")
+    # Auto-detect public IP
+    PUBLIC_IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me || echo "127.0.0.1")
     HOSTNAME=$(hostname)
     INTERNAL_IP="10.8.0.1"  # WireGuard server IP
+
+    # Auto-detect geolocation using ip-api.com (free, no API key required)
+    echo -e "${CYAN}Detecting server location...${NC}"
+    GEO_DATA=$(curl -s "http://ip-api.com/json/$PUBLIC_IP?fields=status,country,countryCode,city,lat,lon,isp" 2>/dev/null)
+
+    if echo "$GEO_DATA" | jq -e '.status == "success"' >/dev/null 2>&1; then
+        COUNTRY=$(echo "$GEO_DATA" | jq -r '.country // "Unknown"')
+        COUNTRY_CODE=$(echo "$GEO_DATA" | jq -r '.countryCode // "US"')
+        CITY=$(echo "$GEO_DATA" | jq -r '.city // "Unknown"')
+        LATITUDE=$(echo "$GEO_DATA" | jq -r '.lat // 0')
+        LONGITUDE=$(echo "$GEO_DATA" | jq -r '.lon // 0')
+        ISP=$(echo "$GEO_DATA" | jq -r '.isp // "Unknown"')
+        echo -e "${GREEN}✓ Location detected${NC}"
+    else
+        echo -e "${YELLOW}⚠ Could not detect location, using defaults${NC}"
+        COUNTRY="Unknown"
+        COUNTRY_CODE="US"
+        CITY="Unknown"
+        LATITUDE=0
+        LONGITUDE=0
+        ISP="Unknown"
+    fi
 
     echo -e "${BLUE}Auto-detected information:${NC}"
     echo "  Public IP: $PUBLIC_IP"
     echo "  Hostname: $HOSTNAME"
+    echo "  Location: $CITY, $COUNTRY ($COUNTRY_CODE)"
+    echo "  Coordinates: $LATITUDE, $LONGITUDE"
+    echo "  ISP: $ISP"
     echo ""
 
     read -p "Node name [default: aureo-node-$HOSTNAME]: " NODE_NAME
@@ -1779,13 +1804,13 @@ register_node() {
             \"hostname\": \"$HOSTNAME\",
             \"public_ip\": \"$PUBLIC_IP\",
             \"internal_ip\": \"$INTERNAL_IP\",
-            \"country\": \"Unknown\",
-            \"country_code\": \"US\",
-            \"city\": \"Unknown\",
+            \"country\": \"$COUNTRY\",
+            \"country_code\": \"$COUNTRY_CODE\",
+            \"city\": \"$CITY\",
             \"wireguard_port\": 51820,
             \"openvpn_port\": 1194,
-            \"latitude\": 0,
-            \"longitude\": 0
+            \"latitude\": $LATITUDE,
+            \"longitude\": $LONGITUDE
         }")
 
     NODE_ID=$(echo "$NODE_RESPONSE" | jq -r '.node.id')
@@ -1793,9 +1818,10 @@ register_node() {
     if [ "$NODE_ID" != "null" ] && [ -n "$NODE_ID" ]; then
         echo -e "${GREEN}✓ VPN node registered in database${NC}"
         echo -e "${BLUE}  Node ID: $NODE_ID${NC}"
+        echo -e "${BLUE}  Location: $CITY, $COUNTRY${NC}"
 
-        # Set internal_ip, status to online, and update heartbeat
-        db_exec "UPDATE vpn_nodes SET internal_ip='$INTERNAL_IP', status='online', last_heartbeat=NOW() WHERE id='$NODE_ID';"
+        # Set all node info including geolocation, status to online, and update heartbeat
+        db_exec "UPDATE vpn_nodes SET internal_ip='$INTERNAL_IP', public_ip='$PUBLIC_IP', country='$COUNTRY', country_code='$COUNTRY_CODE', city='$CITY', latitude=$LATITUDE, longitude=$LONGITUDE, status='online', last_heartbeat=NOW() WHERE id='$NODE_ID';"
 
         # Recalculate operator stats
         db_exec "UPDATE node_operators SET active_nodes_count = (SELECT COUNT(*) FROM vpn_nodes WHERE operator_id = node_operators.id AND status = 'online' AND is_active = true);"
@@ -1806,6 +1832,10 @@ NODE_ID=$NODE_ID
 NODE_NAME=$NODE_NAME
 PUBLIC_IP=$PUBLIC_IP
 INTERNAL_IP=$INTERNAL_IP
+COUNTRY=$COUNTRY
+CITY=$CITY
+LATITUDE=$LATITUDE
+LONGITUDE=$LONGITUDE
 EOF
 
         # Export NODE_ID for use in next steps
