@@ -1,2 +1,18 @@
 node_modules/
 web/node_modules/
+
+# Sensitive files
+keys.json
+deployments/docker/.env
+*.pem
+*.key
+
+# Build artifacts
+bin/
+coverage.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp

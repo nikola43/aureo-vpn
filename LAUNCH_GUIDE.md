@@ -41,7 +41,7 @@ This will launch:
 3.  **API Gateway**: Main backend (Port 8080)
 4.  **Control Server**: Node management
 5.  **VPN Node**: WireGuard/OpenVPN server (Port 51820/1194)
-6.  **Dashboard**: Operator UI (Port 3001)
+6.  **Dashboard**: Operator UI (Port 5000)
 7.  **Prometheus & Grafana**: Monitoring (Port 9090 & 3000)
 
 ## 4. Verification
@@ -54,14 +54,14 @@ curl http://localhost:8080/health
 # Response: {"status":"healthy", "database":"connected"}
 
 # Check Dashboard
-# Open http://your-server-ip:3001 in your browser
+# Open http://your-server-ip:5000 in your browser
 ```
 
 ## 5. Post-Deployment Steps
 
 ### Register as an Operator
 
-1.  Open the Dashboard (`http://your-server-ip:3001`).
+1.  Open the Dashboard (`http://your-server-ip:5000`).
 2.  Sign up for a new account.
 3.  Go to "Register Operator" and connect your wallet.
 

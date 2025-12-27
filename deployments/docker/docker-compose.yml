@@ -165,7 +165,7 @@ services:
         VITE_API_URL: /api/v1
     container_name: aureo-vpn-dashboard
     ports:
-      - "3001:80"
+      - "5000:80"
     depends_on:
       - api-gateway
     networks:
