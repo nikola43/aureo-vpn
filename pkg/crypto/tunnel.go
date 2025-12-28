@@ -63,9 +63,13 @@ const (
 
 // TunnelCipher provides military-grade encryption for VPN tunnel
 type TunnelCipher struct {
-	// Encryption keys (double-layer)
-	primaryCipher   cipher.AEAD // ChaCha20-Poly1305
-	secondaryCipher cipher.AEAD // XChaCha20-Poly1305 (inner layer)
+	// Encryption ciphers (double-layer) - for sending
+	primarySendCipher   cipher.AEAD // ChaCha20-Poly1305
+	secondarySendCipher cipher.AEAD // XChaCha20-Poly1305 (inner layer)
+
+	// Decryption ciphers (double-layer) - for receiving
+	primaryRecvCipher   cipher.AEAD // ChaCha20-Poly1305
+	secondaryRecvCipher cipher.AEAD // XChaCha20-Poly1305 (inner layer)
 
 	// Key material
 	sendKey    []byte
@@ -219,17 +223,28 @@ func (ke *KeyExchange) DeriveKeys(peerPublicKey []byte, isInitiator bool) (*Deri
 		return nil, ErrKeyExchangeFailed
 	}
 
-	// Derive keys using HKDF
-	// Info includes role to ensure different keys for each direction
-	var info []byte
-	if isInitiator {
-		info = []byte("aureo-vpn-tunnel-v1-initiator")
-	} else {
-		info = []byte("aureo-vpn-tunnel-v1-responder")
-	}
-
-	// Derive 4 keys: send/recv for primary and secondary ciphers
+	// Derive keys using HKDF with common info (both parties derive same base keys)
+	info := []byte("aureo-vpn-tunnel-v1")
 	hkdfReader := hkdf.New(sha256.New, sharedSecret, nil, info)
+
+	// Derive 4 base keys that both parties will have in the same order
+	initiatorPrimary := make([]byte, KeySize)
+	responderPrimary := make([]byte, KeySize)
+	initiatorSecondary := make([]byte, KeySize)
+	responderSecondary := make([]byte, KeySize)
+
+	if _, err := io.ReadFull(hkdfReader, initiatorPrimary); err != nil {
+		return nil, ErrKeyExchangeFailed
+	}
+	if _, err := io.ReadFull(hkdfReader, responderPrimary); err != nil {
+		return nil, ErrKeyExchangeFailed
+	}
+	if _, err := io.ReadFull(hkdfReader, initiatorSecondary); err != nil {
+		return nil, ErrKeyExchangeFailed
+	}
+	if _, err := io.ReadFull(hkdfReader, responderSecondary); err != nil {
+		return nil, ErrKeyExchangeFailed
+	}
 
 	keys := &DerivedKeys{
 		PrimarySendKey:   make([]byte, KeySize),
@@ -239,20 +254,20 @@ func (ke *KeyExchange) DeriveKeys(peerPublicKey []byte, isInitiator bool) (*Deri
 		SessionID:        [32]byte{},
 	}
 
-	if _, err := io.ReadFull(hkdfReader, keys.PrimarySendKey); err != nil {
-		return nil, ErrKeyExchangeFailed
-	}
-	if _, err := io.ReadFull(hkdfReader, keys.PrimaryRecvKey); err != nil {
-		return nil, ErrKeyExchangeFailed
-	}
-	if _, err := io.ReadFull(hkdfReader, keys.SecondarySendKey); err != nil {
-		return nil, ErrKeyExchangeFailed
-	}
-	if _, err := io.ReadFull(hkdfReader, keys.SecondaryRecvKey); err != nil {
-		return nil, ErrKeyExchangeFailed
+	// Assign keys based on role - initiator's send = responder's recv
+	if isInitiator {
+		copy(keys.PrimarySendKey, initiatorPrimary)
+		copy(keys.PrimaryRecvKey, responderPrimary)
+		copy(keys.SecondarySendKey, initiatorSecondary)
+		copy(keys.SecondaryRecvKey, responderSecondary)
+	} else {
+		copy(keys.PrimarySendKey, responderPrimary)
+		copy(keys.PrimaryRecvKey, initiatorPrimary)
+		copy(keys.SecondarySendKey, responderSecondary)
+		copy(keys.SecondaryRecvKey, initiatorSecondary)
 	}
 
-	// Generate session ID
+	// Generate session ID (same for both parties)
 	sessionHash := sha256.Sum256(append(sharedSecret, info...))
 	keys.SessionID = sessionHash
 
@@ -285,28 +300,40 @@ func (dk *DerivedKeys) Wipe() {
 
 // NewTunnelCipher creates a new tunnel cipher with derived keys
 func NewTunnelCipher(keys *DerivedKeys) (*TunnelCipher, error) {
-	// Create primary cipher (ChaCha20-Poly1305)
-	primaryCipher, err := chacha20poly1305.New(keys.PrimarySendKey)
+	// Create send ciphers
+	primarySendCipher, err := chacha20poly1305.New(keys.PrimarySendKey)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create secondary cipher (XChaCha20-Poly1305) for double encryption
-	secondaryCipher, err := chacha20poly1305.NewX(keys.SecondarySendKey)
+	secondarySendCipher, err := chacha20poly1305.NewX(keys.SecondarySendKey)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create receive ciphers
+	primaryRecvCipher, err := chacha20poly1305.New(keys.PrimaryRecvKey)
+	if err != nil {
+		return nil, err
+	}
+
+	secondaryRecvCipher, err := chacha20poly1305.NewX(keys.SecondaryRecvKey)
 	if err != nil {
 		return nil, err
 	}
 
 	now := time.Now()
 	tc := &TunnelCipher{
-		primaryCipher:   primaryCipher,
-		secondaryCipher: secondaryCipher,
-		sendKey:         make([]byte, len(keys.PrimarySendKey)),
-		recvKey:         make([]byte, len(keys.PrimaryRecvKey)),
-		sessionID:       keys.SessionID,
-		createdAt:       now,
-		lastRekey:       now,
-		replayWindow:    NewReplayWindow(),
+		primarySendCipher:   primarySendCipher,
+		secondarySendCipher: secondarySendCipher,
+		primaryRecvCipher:   primaryRecvCipher,
+		secondaryRecvCipher: secondaryRecvCipher,
+		sendKey:             make([]byte, len(keys.PrimarySendKey)),
+		recvKey:             make([]byte, len(keys.PrimaryRecvKey)),
+		sessionID:           keys.SessionID,
+		createdAt:           now,
+		lastRekey:           now,
+		replayWindow:        NewReplayWindow(),
 	}
 
 	copy(tc.sendKey, keys.PrimarySendKey)
@@ -347,7 +374,7 @@ func (tc *TunnelCipher) Encrypt(plaintext []byte, packetType PacketType) ([]byte
 	if _, err := rand.Read(innerNonce); err != nil {
 		return nil, err
 	}
-	innerCiphertext := tc.secondaryCipher.Seal(nil, innerNonce, packet, nil)
+	innerCiphertext := tc.secondarySendCipher.Seal(nil, innerNonce, packet, nil)
 
 	// Second encryption layer (ChaCha20-Poly1305 - outer)
 	// Use counter-based nonce for outer layer
@@ -356,7 +383,7 @@ func (tc *TunnelCipher) Encrypt(plaintext []byte, packetType PacketType) ([]byte
 	binary.BigEndian.PutUint64(outerNonce[4:], tc.sendNonce)
 
 	// Include inner nonce as additional data
-	outerCiphertext := tc.primaryCipher.Seal(nil, outerNonce, innerCiphertext, innerNonce)
+	outerCiphertext := tc.primarySendCipher.Seal(nil, outerNonce, innerCiphertext, innerNonce)
 
 	// Build final packet: [outer_nonce(12)][inner_nonce(24)][ciphertext]
 	finalPacket := make([]byte, 12+24+len(outerCiphertext))
@@ -392,13 +419,13 @@ func (tc *TunnelCipher) Decrypt(ciphertext []byte) ([]byte, PacketType, error) {
 	}
 
 	// First decryption layer (ChaCha20-Poly1305 - outer)
-	innerCiphertext, err := tc.primaryCipher.Open(nil, outerNonce, encryptedData, innerNonce)
+	innerCiphertext, err := tc.primaryRecvCipher.Open(nil, outerNonce, encryptedData, innerNonce)
 	if err != nil {
 		return nil, 0, ErrDecryptionFailed
 	}
 
 	// Second decryption layer (XChaCha20-Poly1305 - inner)
-	packet, err := tc.secondaryCipher.Open(nil, innerNonce, innerCiphertext, nil)
+	packet, err := tc.secondaryRecvCipher.Open(nil, innerNonce, innerCiphertext, nil)
 	if err != nil {
 		return nil, 0, ErrDecryptionFailed
 	}
@@ -459,13 +486,24 @@ func (tc *TunnelCipher) CompleteRekey(newKeys *DerivedKeys) error {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 
-	// Create new ciphers
-	newPrimary, err := chacha20poly1305.New(newKeys.PrimarySendKey)
+	// Create new send ciphers
+	newPrimarySend, err := chacha20poly1305.New(newKeys.PrimarySendKey)
 	if err != nil {
 		return err
 	}
 
-	newSecondary, err := chacha20poly1305.NewX(newKeys.SecondarySendKey)
+	newSecondarySend, err := chacha20poly1305.NewX(newKeys.SecondarySendKey)
+	if err != nil {
+		return err
+	}
+
+	// Create new receive ciphers
+	newPrimaryRecv, err := chacha20poly1305.New(newKeys.PrimaryRecvKey)
+	if err != nil {
+		return err
+	}
+
+	newSecondaryRecv, err := chacha20poly1305.NewX(newKeys.SecondaryRecvKey)
 	if err != nil {
 		return err
 	}
@@ -474,9 +512,11 @@ func (tc *TunnelCipher) CompleteRekey(newKeys *DerivedKeys) error {
 	wipeBytes(tc.sendKey)
 	wipeBytes(tc.recvKey)
 
-	// Update cipher and keys
-	tc.primaryCipher = newPrimary
-	tc.secondaryCipher = newSecondary
+	// Update ciphers and keys
+	tc.primarySendCipher = newPrimarySend
+	tc.secondarySendCipher = newSecondarySend
+	tc.primaryRecvCipher = newPrimaryRecv
+	tc.secondaryRecvCipher = newSecondaryRecv
 	tc.sendKey = make([]byte, len(newKeys.PrimarySendKey))
 	tc.recvKey = make([]byte, len(newKeys.PrimaryRecvKey))
 	copy(tc.sendKey, newKeys.PrimarySendKey)
@@ -526,8 +566,10 @@ func (tc *TunnelCipher) Close() {
 	wipeBytes(tc.nextSendKey)
 	wipeBytes(tc.nextRecvKey)
 
-	tc.primaryCipher = nil
-	tc.secondaryCipher = nil
+	tc.primarySendCipher = nil
+	tc.secondarySendCipher = nil
+	tc.primaryRecvCipher = nil
+	tc.secondaryRecvCipher = nil
 }
 
 // generatePadding creates random padding for traffic analysis protection

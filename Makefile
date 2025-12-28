@@ -5,7 +5,7 @@ BINARY_DIR=bin
 API_GATEWAY_BINARY=$(BINARY_DIR)/api-gateway
 CONTROL_SERVER_BINARY=$(BINARY_DIR)/control-server
 VPN_NODE_BINARY=$(BINARY_DIR)/vpn-node
-CLI_BINARY=$(BINARY_DIR)/aureo-vpn
+CLI_BINARY=$(BINARY_DIR)/aureo
 
 # Go parameters
 GOCMD=go
@@ -54,7 +54,7 @@ build-node: ## Build VPN Node only
 
 build-cli: ## Build CLI only
 	@mkdir -p $(BINARY_DIR)
-	@$(GOBUILD) $(BUILD_FLAGS) $(LDFLAGS) -o $(CLI_BINARY) ./cmd/cli
+	@$(GOBUILD) $(BUILD_FLAGS) -ldflags "-s -w -X main.version=$(shell git describe --tags --always 2>/dev/null || echo 'dev') -X main.buildTime=$(shell date -u '+%Y-%m-%dT%H:%M:%SZ')" -o $(CLI_BINARY) ./cmd/cli
 
 install: ## Install binaries to /usr/local/bin
 	@echo "Installing binaries..."
@@ -63,6 +63,11 @@ install: ## Install binaries to /usr/local/bin
 	@sudo cp $(VPN_NODE_BINARY) /usr/local/bin/
 	@sudo cp $(CLI_BINARY) /usr/local/bin/
 	@echo "Installation complete!"
+
+install-cli: build-cli ## Install CLI to /usr/local/bin
+	@echo "Installing CLI..."
+	@sudo cp $(CLI_BINARY) /usr/local/bin/
+	@echo "CLI installed! Run 'aureo --help' to get started."
 
 test: ## Run tests
 	@echo "Running tests..."

@@ -539,43 +539,37 @@ func (to *TrafficObfuscator) addRandomWrapper(data []byte) []byte {
 }
 
 // removeRandomWrapper removes random prefix and suffix
+// Format: [prefixLen:1][prefix:N][data][suffixLen:1][suffix:M]
 func (to *TrafficObfuscator) removeRandomWrapper(wrapped []byte) ([]byte, error) {
 	if len(wrapped) < 2 {
 		return nil, ErrInvalidPacketSize
 	}
 
 	prefixLen := int(wrapped[0])
-	if len(wrapped) < 1+prefixLen+1 {
+	if len(wrapped) < 1+prefixLen+2 { // At least prefixLen byte, prefix, 1 byte data, suffixLen byte
 		return nil, ErrDeobfuscateFailed
 	}
 
-	// Find suffix
+	// After prefix: [data][suffixLen:1][suffix:M]
 	remaining := wrapped[1+prefixLen:]
 	if len(remaining) < 2 {
 		return nil, ErrDeobfuscateFailed
 	}
 
-	// Suffix length is stored at the end of data
-	// We need to find it by reading backwards
-	suffixLen := int(remaining[len(remaining)-1])
-	if suffixLen > len(remaining)-1 {
-		// Try different interpretation: suffix length before suffix
-		for i := len(remaining) - 2; i >= 0; i-- {
-			possibleSuffixLen := int(remaining[i])
-			if i+1+possibleSuffixLen == len(remaining) {
-				return remaining[:i], nil
-			}
+	// The suffixLen byte is right after data, followed by suffix bytes
+	// We need to find it by checking each possible position
+	// Format: remaining = [data][suffixLen:1][suffix:M]
+	// So if byte at position i equals (len(remaining) - i - 1), that's the suffixLen byte
+	for i := len(remaining) - 1; i >= 0; i-- {
+		possibleSuffixLen := int(remaining[i])
+		// Check if this byte could be the suffixLen marker
+		// It should be followed by exactly possibleSuffixLen bytes
+		if i+1+possibleSuffixLen == len(remaining) && possibleSuffixLen >= 4 && possibleSuffixLen <= 16 {
+			return remaining[:i], nil
 		}
-		return nil, ErrDeobfuscateFailed
 	}
 
-	// Standard format: data ends before suffixLen marker
-	dataEnd := len(remaining) - 1 - suffixLen
-	if dataEnd < 0 {
-		return nil, ErrDeobfuscateFailed
-	}
-
-	return remaining[:dataEnd], nil
+	return nil, ErrDeobfuscateFailed
 }
 
 // xorWithStream applies XOR with deterministic pseudo-random stream

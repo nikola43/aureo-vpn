@@ -1,4 +1,5 @@
 import React, { useRef, useMemo, Suspense, useState, useEffect, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { Points, PointMaterial, OrbitControls, Sphere, MeshDistortMaterial, Float, Stars } from '@react-three/drei';
 import { motion, useScroll, useTransform, useInView, AnimatePresence, useSpring } from 'framer-motion';
@@ -7,6 +8,7 @@ import CountUp from 'react-countup';
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
 import * as THREE from 'three';
 import { ParallaxSection, ParallaxLayer, MouseParallax } from './components/ParallaxSection';
+import ParallaxImage from './components/ParallaxImage';
 import {
   FloatingShield,
   DataStream,
@@ -31,13 +33,9 @@ import {
   FloatingParticles,
   NetworkLinesEffect,
   HexagonGrid,
-  AnimatedOrb,
-  CodeRain,
   RadarSweep,
   MorphingBlob,
-  TypingText,
-  SpotlightEffect,
-  BorderBeam
+  TypingText
 } from './components/EnhancedDecorations';
 import NetworkVisualization3D from './components/NetworkVisualization3D';
 import {
@@ -408,7 +406,7 @@ function Navigation({ scrolled, mobileMenuOpen, setMobileMenuOpen }) {
             {['Features', 'How it Works', 'Earnings', 'Pricing'].map((item) => (
               <a
                 key={item}
-                href={`#${item.toLowerCase().replace(' ', '-')}`}
+                href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
                 className="px-4 py-2 text-gray-300 hover:text-white hover:bg-white/5 rounded-lg transition-all font-medium"
               >
                 {item}
@@ -458,7 +456,7 @@ function Navigation({ scrolled, mobileMenuOpen, setMobileMenuOpen }) {
               {['Features', 'How it Works', 'Earnings', 'Pricing'].map((item) => (
                 <a
                   key={item}
-                  href={`#${item.toLowerCase().replace(' ', '-')}`}
+                  href={`#${item.toLowerCase().replace(/\s+/g, '-')}`}
                   className="px-4 py-3 text-gray-300 hover:text-white hover:bg-white/5 rounded-lg transition-all font-medium"
                   onClick={() => setMobileMenuOpen(false)}
                 >
@@ -489,42 +487,68 @@ function HeroSection() {
 
   return (
     <section className="relative min-h-screen flex items-center justify-center overflow-hidden pt-20">
+      {/* Parallax Background Images */}
+      <div className="absolute inset-0 z-0 overflow-hidden">
+        <div className="absolute -top-20 -left-20 w-[600px] h-[600px] opacity-20">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=800&auto=format&fit=crop"
+            alt="Cyber network"
+            className="w-full h-full object-cover rounded-full blur-sm"
+            scale={1.5}
+            orientation="down"
+          />
+        </div>
+        <div className="absolute -bottom-20 -right-20 w-[500px] h-[500px] opacity-15">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=800&auto=format&fit=crop"
+            alt="Digital earth"
+            className="w-full h-full object-cover rounded-full blur-sm"
+            scale={1.4}
+            orientation="up"
+          />
+        </div>
+        <div className="absolute top-1/3 right-10 w-[300px] h-[300px] opacity-10 hidden xl:block">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=600&auto=format&fit=crop"
+            alt="Server room"
+            className="w-full h-full object-cover rounded-2xl"
+            scale={1.3}
+            orientation="left"
+          />
+        </div>
+      </div>
+
       {/* 3D Background with enhanced effects */}
-      <motion.div className="absolute inset-0 z-0" style={{ y, scale }}>
+      <motion.div className="absolute inset-0 z-[2]" style={{ y, scale }}>
         <Scene3D />
       </motion.div>
 
       {/* Floating particles */}
-      <FloatingParticles count={40} className="z-5" />
+      <FloatingParticles count={40} className="z-[3]" />
 
       {/* Network lines effect */}
-      <NetworkLinesEffect className="z-5 opacity-30" />
-
-      {/* Spotlight follows mouse */}
-      <SpotlightEffect className="z-5" />
+      <NetworkLinesEffect className="z-[3] opacity-30" />
 
       {/* Parallax Decorative Elements */}
-      <FloatingElement yRange={[-80, 80]} xRange={[-20, 20]} className="absolute top-20 left-10 w-24 h-24 opacity-40 hidden lg:block z-15">
+      <FloatingElement yRange={[-80, 80]} xRange={[-20, 20]} className="absolute top-20 left-10 w-24 h-24 opacity-40 hidden lg:block z-[15]">
         <FloatingShield className="w-full h-full" delay={0} />
       </FloatingElement>
-      <FloatingElement yRange={[-60, 60]} rotateRange={[0, 180]} className="absolute top-40 right-20 w-32 h-32 opacity-25 hidden lg:block z-15">
+      <FloatingElement yRange={[-60, 60]} rotateRange={[0, 180]} className="absolute top-40 right-20 w-32 h-32 opacity-25 hidden lg:block z-[15]">
         <OrbitRing className="w-full h-full" />
       </FloatingElement>
-      <FloatingElement yRange={[-40, 40]} className="absolute bottom-40 left-20 w-32 h-64 opacity-20 hidden lg:block z-15">
+      <FloatingElement yRange={[-40, 40]} className="absolute bottom-40 left-20 w-32 h-64 opacity-20 hidden lg:block z-[15]">
         <DataStream className="w-full h-full" />
       </FloatingElement>
-      <RotateOnScroll rotateRange={[0, 360]} className="absolute top-1/3 right-10 w-20 h-20 opacity-20 hidden xl:block z-15">
+      <RotateOnScroll rotateRange={[0, 360]} className="absolute top-1/4 right-20 w-20 h-20 opacity-20 hidden xl:block z-[15]">
         <CryptoIcons className="w-full h-full" />
       </RotateOnScroll>
 
-      {/* Morphing blobs */}
-      <MorphingBlob className="absolute -top-20 -left-20 w-[500px] h-[500px] opacity-30" />
-      <MorphingBlob className="absolute -bottom-40 -right-20 w-[400px] h-[400px] opacity-20" color="#60A5FA" />
+      {/* Morphing blobs - behind content */}
+      <MorphingBlob className="absolute -top-20 -left-20 w-[500px] h-[500px] opacity-15 z-[4]" />
+      <MorphingBlob className="absolute -bottom-40 -right-20 w-[400px] h-[400px] opacity-10 z-[4]" color="#60A5FA" />
 
       {/* Gradient Overlays */}
-      <motion.div className="absolute inset-0 bg-gradient-to-b from-dark-950/50 via-transparent to-dark-950 z-10" style={{ opacity }} />
-      <AnimatedOrb className="-top-40 -left-40" size={600} />
-      <AnimatedOrb className="top-1/4 -right-20" size={400} color1="#60A5FA" color2="#3B82F6" speed={6} />
+      <motion.div className="absolute inset-0 bg-gradient-to-b from-dark-950/80 via-dark-950/30 to-dark-950 z-[5]" style={{ opacity }} />
 
       {/* Content */}
       <div className="relative z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
@@ -534,16 +558,15 @@ function HeroSection() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.8 }}
           >
-            {/* Badge with border animation */}
+            {/* Badge */}
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ delay: 0.2, duration: 0.5 }}
-              className="relative inline-flex items-center gap-2 px-4 py-2 bg-gold-500/10 border border-gold-500/20 rounded-full mb-8 overflow-hidden"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-gold-500/10 border border-gold-500/30 rounded-full mb-8"
             >
-              <BorderBeam duration={4} />
-              <Sparkles className="w-4 h-4 text-gold-500 relative z-10" />
-              <span className="text-gold-400 text-sm font-medium relative z-10">Decentralized VPN Network</span>
+              <Sparkles className="w-4 h-4 text-gold-500" />
+              <span className="text-gold-400 text-sm font-medium">Decentralized VPN Network</span>
             </motion.div>
 
             {/* Main Headline with staggered animation */}
@@ -590,12 +613,11 @@ function HeroSection() {
               <MagneticElement strength={0.2}>
                 <motion.a
                   href="/register"
-                  className="group relative inline-flex items-center justify-center px-8 py-4 bg-gradient-to-r from-gold-500 to-gold-600 text-dark-950 text-lg font-bold rounded-full overflow-hidden shadow-lg shadow-gold-500/25"
+                  className="group relative inline-flex items-center justify-center px-8 py-4 bg-gradient-to-r from-gold-500 to-gold-600 text-dark-950 text-lg font-bold rounded-full shadow-lg shadow-gold-500/25"
                   whileHover={{ scale: 1.05, boxShadow: "0 20px 40px rgba(245, 158, 11, 0.3)" }}
                   whileTap={{ scale: 0.98 }}
                 >
-                  <BorderBeam duration={3} />
-                  <span className="relative z-10 flex items-center gap-2">
+                  <span className="flex items-center gap-2">
                     Start Browsing Free
                     <ArrowRight className="w-5 h-5 group-hover:translate-x-2 transition-transform" />
                   </span>
@@ -604,16 +626,11 @@ function HeroSection() {
               <MagneticElement strength={0.2}>
                 <motion.a
                   href="#earnings"
-                  className="group relative inline-flex items-center justify-center px-8 py-4 glass rounded-full text-lg font-medium hover:bg-white/10 transition-all overflow-hidden"
+                  className="group inline-flex items-center justify-center px-8 py-4 glass rounded-full text-lg font-medium hover:bg-white/10 transition-all"
                   whileHover={{ scale: 1.02 }}
                 >
                   <Coins className="w-5 h-5 mr-2 text-gold-500" />
                   Become an Operator
-                  <motion.div
-                    className="absolute inset-0 bg-gradient-to-r from-gold-500/0 via-gold-500/10 to-gold-500/0"
-                    animate={{ x: ['-100%', '100%'] }}
-                    transition={{ duration: 2, repeat: Infinity, repeatDelay: 1 }}
-                  />
                 </motion.a>
               </MagneticElement>
             </motion.div>
@@ -762,10 +779,31 @@ function FeaturesSection() {
 
   return (
     <section id="features" className="relative py-32 overflow-hidden">
+      {/* Parallax Background Images */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-0 right-0 w-[400px] h-[400px] opacity-10">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=600&auto=format&fit=crop"
+            alt="Cyber security"
+            className="w-full h-full object-cover rounded-full blur-md"
+            scale={1.3}
+            orientation="down"
+          />
+        </div>
+        <div className="absolute bottom-0 left-0 w-[350px] h-[350px] opacity-10">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1563986768609-322da13575f3?w=600&auto=format&fit=crop"
+            alt="Lock security"
+            className="w-full h-full object-cover rounded-full blur-md"
+            scale={1.4}
+            orientation="up"
+          />
+        </div>
+      </div>
+
       {/* Background Elements */}
       <div className="absolute inset-0 mesh-gradient" />
-      <GridBackground className="absolute inset-0 pointer-events-none" />
-      <GlowingOrb className="w-[500px] h-[500px] top-1/4 -right-40 opacity-30" color="gold" />
+      <GridBackground className="absolute inset-0 pointer-events-none z-0" />
 
       {/* Parallax Decorations */}
       <ParallaxLayer speed={0.4} className="absolute top-20 right-10 w-40 h-40 opacity-20 hidden lg:block">
@@ -794,12 +832,7 @@ function FeaturesSection() {
           {features.map((feature, index) => (
             <StaggeredItem key={feature.title}>
               <TiltCard tiltStrength={8}>
-                <div className="feature-card relative glass rounded-2xl p-8 h-full group cursor-pointer overflow-hidden">
-                  {/* Animated border on hover */}
-                  <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500">
-                    <BorderBeam duration={4} />
-                  </div>
-
+                <div className="feature-card relative glass rounded-2xl p-8 h-full group cursor-pointer overflow-hidden border border-transparent hover:border-gold-500/20 transition-all duration-300">
                   {/* Gradient Background on Hover */}
                   <div className={`absolute inset-0 bg-gradient-to-br ${feature.color} opacity-0 group-hover:opacity-5 rounded-2xl transition-opacity duration-500`} />
 
@@ -935,8 +968,28 @@ function NetworkSection() {
     <section className="relative py-32 overflow-hidden">
       {/* Background */}
       <div className="absolute inset-0 bg-dark-950" />
-      <GlowingOrb className="w-[600px] h-[600px] -bottom-40 -left-40 opacity-30" color="gold" />
-      <GlowingOrb className="w-[400px] h-[400px] top-20 right-0 opacity-20" color="blue" />
+
+      {/* Parallax Background Images */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-20 left-1/4 w-[500px] h-[500px] opacity-8">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1558494949-ef010cbdcc31?w=800&auto=format&fit=crop"
+            alt="Server infrastructure"
+            className="w-full h-full object-cover rounded-full blur-lg"
+            scale={1.5}
+            orientation="up"
+          />
+        </div>
+        <div className="absolute bottom-0 right-10 w-[400px] h-[400px] opacity-8 hidden lg:block">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1544197150-b99a580bb7a8?w=600&auto=format&fit=crop"
+            alt="Network cables"
+            className="w-full h-full object-cover rounded-2xl blur-md"
+            scale={1.3}
+            orientation="down"
+          />
+        </div>
+      </div>
 
       {/* Parallax decorations */}
       <ParallaxLayer speed={0.5} className="absolute top-10 left-1/4 w-32 h-32 opacity-15 hidden lg:block">
@@ -1046,6 +1099,28 @@ function EarningsSection() {
 
   return (
     <section id="earnings" className="relative py-32 overflow-hidden">
+      {/* Parallax Background Images */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-10 right-0 w-[350px] h-[350px] opacity-10">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1621761191319-c6fb62004040?w=600&auto=format&fit=crop"
+            alt="Cryptocurrency"
+            className="w-full h-full object-cover rounded-full blur-md"
+            scale={1.4}
+            orientation="down"
+          />
+        </div>
+        <div className="absolute bottom-10 left-0 w-[300px] h-[300px] opacity-10">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1516245834210-c4c142787335?w=600&auto=format&fit=crop"
+            alt="Bitcoin"
+            className="w-full h-full object-cover rounded-full blur-md"
+            scale={1.3}
+            orientation="up"
+          />
+        </div>
+      </div>
+
       <div className="absolute inset-0 mesh-gradient" />
       <GridBackground className="absolute inset-0 pointer-events-none" />
 
@@ -1255,8 +1330,29 @@ function PricingSection() {
 
   return (
     <section id="pricing" className="relative py-32 overflow-hidden">
+      {/* Parallax Background Images */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 left-0 w-[300px] h-[300px] opacity-8">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1639762681485-074b7f938ba0?w=600&auto=format&fit=crop"
+            alt="Blockchain"
+            className="w-full h-full object-cover rounded-full blur-lg"
+            scale={1.3}
+            orientation="up"
+          />
+        </div>
+        <div className="absolute bottom-20 right-0 w-[280px] h-[280px] opacity-8">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1620321023374-d1a68fbc720d?w=600&auto=format&fit=crop"
+            alt="Ethereum"
+            className="w-full h-full object-cover rounded-full blur-lg"
+            scale={1.4}
+            orientation="down"
+          />
+        </div>
+      </div>
+
       <div className="absolute inset-0 bg-gradient-to-b from-dark-950 via-dark-900/30 to-dark-950" />
-      <GlowingOrb className="w-[500px] h-[500px] top-0 right-0 opacity-20" color="gold" />
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <AnimatedSection className="text-center mb-16">
@@ -1299,11 +1395,9 @@ function PricingSection() {
           {plans.map((plan, index) => (
             <StaggeredItem key={plan.name}>
               <TiltCard tiltStrength={5}>
-                <div className={`relative glass rounded-2xl p-8 h-full overflow-hidden ${
-                  plan.popular ? 'ring-2 ring-gold-500' : ''
+                <div className={`relative glass rounded-2xl p-8 h-full ${
+                  plan.popular ? 'ring-2 ring-gold-500 shadow-lg shadow-gold-500/10' : ''
                 }`}>
-                  {/* Border animation for popular plan */}
-                  {plan.popular && <BorderBeam duration={5} />}
 
                   {plan.popular && (
                     <motion.div
@@ -1440,6 +1534,28 @@ function TestimonialsSection() {
 
   return (
     <section ref={sectionRef} className="relative py-32 overflow-hidden">
+      {/* Parallax Background Images */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-1/4 left-0 w-[300px] h-[300px] opacity-8">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=600&auto=format&fit=crop"
+            alt="Team collaboration"
+            className="w-full h-full object-cover rounded-full blur-lg"
+            scale={1.3}
+            orientation="up"
+          />
+        </div>
+        <div className="absolute bottom-1/4 right-0 w-[250px] h-[250px] opacity-8">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1553877522-43269d4ea984?w=600&auto=format&fit=crop"
+            alt="Digital workspace"
+            className="w-full h-full object-cover rounded-full blur-lg"
+            scale={1.4}
+            orientation="down"
+          />
+        </div>
+      </div>
+
       <div className="absolute inset-0 mesh-gradient" />
 
       {/* Parallax background elements */}
@@ -1519,6 +1635,28 @@ function CTASection() {
       <div className="absolute inset-0 bg-gradient-to-br from-gold-600 via-gold-500 to-gold-600" />
       <div className="absolute inset-0 bg-grid-pattern bg-grid opacity-10" />
 
+      {/* Parallax Background Image */}
+      <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">
+        <div className="absolute -top-20 -left-20 w-[400px] h-[400px] opacity-20">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?w=600&auto=format&fit=crop"
+            alt="Matrix code"
+            className="w-full h-full object-cover rounded-full mix-blend-overlay"
+            scale={1.5}
+            orientation="down"
+          />
+        </div>
+        <div className="absolute -bottom-20 -right-20 w-[350px] h-[350px] opacity-20">
+          <ParallaxImage
+            src="https://images.unsplash.com/photo-1550751827-4bd374c3f58b?w=600&auto=format&fit=crop"
+            alt="Cyber pattern"
+            className="w-full h-full object-cover rounded-full mix-blend-overlay"
+            scale={1.4}
+            orientation="up"
+          />
+        </div>
+      </div>
+
       {/* Animated Orbs with parallax */}
       <motion.div
         className="absolute top-0 left-1/4 w-96 h-96 bg-white/10 rounded-full blur-3xl"
@@ -1577,30 +1715,44 @@ function CTASection() {
 
 function Footer() {
   const footerLinks = {
-    Product: ['Features', 'Pricing', 'Node Operators', 'Downloads', 'Changelog'],
-    Resources: ['Documentation', 'API Reference', 'Status', 'Blog', 'Support'],
-    Company: ['About', 'Careers', 'Press', 'Partners', 'Contact'],
-    Legal: ['Privacy Policy', 'Terms of Service', 'Cookie Policy', 'Transparency Report']
+    Product: [
+      { label: 'Features', path: '/features' },
+      { label: 'Pricing', path: '/#pricing' },
+      { label: 'Node Operators', path: '/node-operators' },
+      { label: 'Downloads', path: '/downloads' },
+    ],
+    Resources: [
+      { label: 'Documentation', path: '/docs' },
+      { label: 'API Reference', path: '/api' },
+      { label: 'Status', path: '/status' },
+    ],
+    Company: [
+      { label: 'About', path: '/about' },
+      { label: 'Contact', path: '/contact' },
+    ],
+    Legal: [
+      { label: 'Privacy Policy', path: '/privacy' },
+      { label: 'Terms of Service', path: '/terms' },
+    ]
   };
 
   return (
     <footer className="relative bg-dark-950 border-t border-white/5 pt-20 pb-10 overflow-hidden">
       {/* Background */}
       <div className="absolute inset-0 bg-grid-pattern bg-grid opacity-5" />
-      <GlowingOrb className="w-[400px] h-[400px] -bottom-40 left-1/2 -translate-x-1/2 opacity-20" color="gold" />
 
       <div className="relative z-10 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Main Footer Content */}
         <div className="grid grid-cols-2 md:grid-cols-6 gap-8 mb-16">
           {/* Logo & Description */}
           <div className="col-span-2">
-            <a href="#" className="flex items-center gap-3 mb-4">
+            <Link to="/" className="flex items-center gap-3 mb-4">
               <Shield className="h-8 w-8 text-gold-500" />
               <span className="font-bold text-xl">
                 <span className="text-white">Aureo</span>
                 <span className="text-gold-500">VPN</span>
               </span>
-            </a>
+            </Link>
             <p className="text-gray-400 mb-6 max-w-sm">
               The future of decentralized privacy. Secure browsing and crypto rewards for the privacy-conscious.
             </p>
@@ -1623,10 +1775,10 @@ function Footer() {
               <h4 className="font-bold text-white mb-4">{category}</h4>
               <ul className="space-y-3">
                 {links.map((link) => (
-                  <li key={link}>
-                    <a href="#" className="text-gray-400 hover:text-white transition-colors text-sm">
-                      {link}
-                    </a>
+                  <li key={link.path}>
+                    <Link to={link.path} className="text-gray-400 hover:text-white transition-colors text-sm">
+                      {link.label}
+                    </Link>
                   </li>
                 ))}
               </ul>
@@ -1640,10 +1792,10 @@ function Footer() {
             &copy; {new Date().getFullYear()} Aureo Network. All rights reserved.
           </div>
           <div className="flex items-center gap-6 text-sm text-gray-500">
-            <span className="flex items-center gap-2">
+            <Link to="/status" className="flex items-center gap-2 hover:text-white transition-colors">
               <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
               All systems operational
-            </span>
+            </Link>
             <span>v2.0.0</span>
           </div>
         </div>

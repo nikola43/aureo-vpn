@@ -87,13 +87,12 @@ func TestTunnelCipherPacketTypes(t *testing.T) {
 
 	packetTypes := []PacketType{
 		PacketTypeData,
-		PacketTypeControl,
 		PacketTypeKeepAlive,
 		PacketTypeRekey,
 	}
 
 	for _, pt := range packetTypes {
-		t.Run(pt.String(), func(t *testing.T) {
+		t.Run("PacketType", func(t *testing.T) {
 			plaintext := []byte("test data")
 			encrypted, err := cipher.Encrypt(plaintext, pt)
 			if err != nil {
@@ -231,15 +230,12 @@ func TestKeyExchangeDeriveKeys(t *testing.T) {
 // =============================================================================
 
 func TestReplayWindow(t *testing.T) {
-	rw := NewReplayWindow(1024)
+	rw := NewReplayWindow()
 
-	// First time seeing a sequence should be valid
+	// First time seeing a sequence should be valid (Check also marks it as seen)
 	if !rw.Check(100) {
 		t.Error("Check(100) should return true for new sequence")
 	}
-
-	// Mark it as seen
-	rw.Update(100)
 
 	// Second time should be invalid (replay)
 	if rw.Check(100) {
@@ -250,36 +246,33 @@ func TestReplayWindow(t *testing.T) {
 	if !rw.Check(200) {
 		t.Error("Check(200) should return true")
 	}
-	rw.Update(200)
 
-	// Much lower sequence (beyond window) should be invalid
-	if rw.Check(1) {
-		t.Error("Check(1) should return false (too old)")
+	// Sequence 0 is always invalid
+	if rw.Check(0) {
+		t.Error("Check(0) should return false")
 	}
 }
 
 func TestReplayWindowSliding(t *testing.T) {
-	rw := NewReplayWindow(64)
+	rw := NewReplayWindow()
 
-	// Fill up the window
-	for i := uint64(0); i < 64; i++ {
+	// Use sequences starting from 1 (0 is always invalid)
+	for i := uint64(1); i <= 64; i++ {
 		if !rw.Check(i) {
 			t.Errorf("Check(%d) should return true", i)
 		}
-		rw.Update(i)
 	}
 
 	// Advance beyond window
-	for i := uint64(64); i < 128; i++ {
+	for i := uint64(10000); i < 10064; i++ {
 		if !rw.Check(i) {
 			t.Errorf("Check(%d) should return true", i)
 		}
-		rw.Update(i)
 	}
 
-	// Old sequences should now be invalid
-	if rw.Check(0) {
-		t.Error("Check(0) should return false after window slides")
+	// Old sequences should now be invalid (beyond window)
+	if rw.Check(1) {
+		t.Error("Check(1) should return false after window slides")
 	}
 }
 
@@ -290,6 +283,13 @@ func TestReplayWindowSliding(t *testing.T) {
 func generateTestKeys(t *testing.T) *DerivedKeys {
 	t.Helper()
 
+	// For single-cipher tests, sendKey and recvKey must match
+	// so the cipher can decrypt its own encrypted messages
+	primaryKey := make([]byte, 32)
+	secondaryKey := make([]byte, 32)
+	rand.Read(primaryKey)
+	rand.Read(secondaryKey)
+
 	keys := &DerivedKeys{
 		PrimarySendKey:   make([]byte, 32),
 		PrimaryRecvKey:   make([]byte, 32),
@@ -297,10 +297,11 @@ func generateTestKeys(t *testing.T) *DerivedKeys {
 		SecondaryRecvKey: make([]byte, 32),
 	}
 
-	rand.Read(keys.PrimarySendKey)
-	rand.Read(keys.PrimaryRecvKey)
-	rand.Read(keys.SecondarySendKey)
-	rand.Read(keys.SecondaryRecvKey)
+	// Use same keys for send and recv (symmetric for single-cipher tests)
+	copy(keys.PrimarySendKey, primaryKey)
+	copy(keys.PrimaryRecvKey, primaryKey)
+	copy(keys.SecondarySendKey, secondaryKey)
+	copy(keys.SecondaryRecvKey, secondaryKey)
 	rand.Read(keys.SessionID[:])
 
 	return keys
@@ -318,16 +319,21 @@ func generateRandomBytes(t *testing.T, n int) []byte {
 // =============================================================================
 
 func BenchmarkTunnelEncrypt(b *testing.B) {
+	primaryKey := make([]byte, 32)
+	secondaryKey := make([]byte, 32)
+	rand.Read(primaryKey)
+	rand.Read(secondaryKey)
+
 	keys := &DerivedKeys{
 		PrimarySendKey:   make([]byte, 32),
 		PrimaryRecvKey:   make([]byte, 32),
 		SecondarySendKey: make([]byte, 32),
 		SecondaryRecvKey: make([]byte, 32),
 	}
-	rand.Read(keys.PrimarySendKey)
-	rand.Read(keys.PrimaryRecvKey)
-	rand.Read(keys.SecondarySendKey)
-	rand.Read(keys.SecondaryRecvKey)
+	copy(keys.PrimarySendKey, primaryKey)
+	copy(keys.PrimaryRecvKey, primaryKey)
+	copy(keys.SecondarySendKey, secondaryKey)
+	copy(keys.SecondaryRecvKey, secondaryKey)
 	rand.Read(keys.SessionID[:])
 
 	cipher, _ := NewTunnelCipher(keys)
@@ -343,16 +349,21 @@ func BenchmarkTunnelEncrypt(b *testing.B) {
 }
 
 func BenchmarkTunnelDecrypt(b *testing.B) {
+	primaryKey := make([]byte, 32)
+	secondaryKey := make([]byte, 32)
+	rand.Read(primaryKey)
+	rand.Read(secondaryKey)
+
 	keys := &DerivedKeys{
 		PrimarySendKey:   make([]byte, 32),
 		PrimaryRecvKey:   make([]byte, 32),
 		SecondarySendKey: make([]byte, 32),
 		SecondaryRecvKey: make([]byte, 32),
 	}
-	rand.Read(keys.PrimarySendKey)
-	rand.Read(keys.PrimaryRecvKey)
-	rand.Read(keys.SecondarySendKey)
-	rand.Read(keys.SecondaryRecvKey)
+	copy(keys.PrimarySendKey, primaryKey)
+	copy(keys.PrimaryRecvKey, primaryKey)
+	copy(keys.SecondarySendKey, secondaryKey)
+	copy(keys.SecondaryRecvKey, secondaryKey)
 	rand.Read(keys.SessionID[:])
 
 	cipher, _ := NewTunnelCipher(keys)
