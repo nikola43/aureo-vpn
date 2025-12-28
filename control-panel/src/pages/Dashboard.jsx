@@ -117,15 +117,25 @@ function BigStatCard({ label, value, status, color = 'blue' }) {
   );
 }
 
+// Format bytes to human readable
+function formatBytes(bytes, decimals = 2) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
 // Custom Tooltip for charts
-const CustomTooltip = ({ active, payload, label }) => {
+const CustomTooltip = ({ active, payload, label, isTraffic }) => {
   if (active && payload && payload.length) {
     return (
       <div className="bg-dark-800 border border-white/10 rounded-lg p-3 shadow-xl">
         <p className="text-gray-400 text-xs mb-1">{label}</p>
         {payload.map((entry, index) => (
           <p key={index} className="text-sm" style={{ color: entry.color }}>
-            {entry.name}: {entry.value}
+            {entry.name}: {isTraffic ? formatBytes(entry.value) + '/s' : entry.value}
           </p>
         ))}
       </div>
@@ -284,8 +294,13 @@ export default function Dashboard() {
     sessionsCount: 0,
     plan: 'Free',
     nodesCount: 0,
+    pendingEarnings: 0,
+    totalNodeTraffic: 0, // Total bytes transferred by node
   });
   const [loadingStats, setLoadingStats] = useState(true);
+
+  // Earnings rate: $0.01 per GB (bronze tier from backend)
+  const RATE_PER_GB = 0.01;
 
   // Node & P2P Metrics (Grafana-style)
   const [nodeMetrics, setNodeMetrics] = useState({
@@ -459,10 +474,22 @@ export default function Dashboard() {
         }];
         return newData.slice(-20);
       });
+
+      // Update total node traffic and pending earnings
+      const totalBytes = (promMetrics?.bytesReceived || 0) + (promMetrics?.bytesSent || 0);
+      const totalGB = totalBytes / (1024 * 1024 * 1024);
+      const pendingEarnings = totalGB * RATE_PER_GB;
+
+      setStats(prev => ({
+        ...prev,
+        totalNodeTraffic: totalBytes,
+        totalData: formatBytes(totalBytes),
+        pendingEarnings: pendingEarnings,
+      }));
     } catch (error) {
       console.error('Failed to fetch metrics:', error);
     }
-  }, []);
+  }, [RATE_PER_GB]);
 
   // Poll metrics every 5 seconds
   useEffect(() => {
@@ -673,15 +700,15 @@ export default function Dashboard() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
               <StatCard
                 icon={Activity}
-                label="Data Transferred"
+                label="Node Traffic"
                 value={loadingStats ? '...' : stats.totalData}
-                subValue="Total usage"
+                subValue="Total transferred"
                 color="gold"
               />
               <StatCard
                 icon={Zap}
-                label="Total Sessions"
-                value={loadingStats ? '...' : stats.sessionsCount}
+                label="Active Connections"
+                value={nodeMetrics.activeConnections}
                 color="blue"
               />
               <StatCard
@@ -691,9 +718,10 @@ export default function Dashboard() {
                 color="green"
               />
               <StatCard
-                icon={Wallet}
-                label="Current Plan"
-                value={loadingStats ? '...' : stats.plan}
+                icon={Coins}
+                label="Pending Earnings"
+                value={loadingStats ? '...' : `$${stats.pendingEarnings.toFixed(4)}`}
+                subValue={`@ $${RATE_PER_GB}/GB`}
                 color="purple"
               />
             </div>
@@ -801,8 +829,8 @@ export default function Dashboard() {
                     <AreaChart data={trafficData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
                       <XAxis dataKey="time" stroke="#6B7280" tick={{ fontSize: 10 }} />
-                      <YAxis stroke="#6B7280" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v} B`} />
-                      <Tooltip content={<CustomTooltip />} />
+                      <YAxis stroke="#6B7280" tick={{ fontSize: 10 }} tickFormatter={(v) => formatBytes(v)} />
+                      <Tooltip content={<CustomTooltip isTraffic={true} />} />
                       <Legend wrapperStyle={{ fontSize: '12px' }} />
                       <Area
                         type="monotone"

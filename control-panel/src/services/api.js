@@ -105,42 +105,45 @@ function parsePrometheusMetrics(text) {
     nodeLoadScore: 0,
   };
 
+  // Regex pattern that handles scientific notation (e.g., 1.679965168e+09)
+  const numberPattern = /[\d.]+(?:e[+-]?\d+)?/i;
+
   const lines = text.split('\n');
   for (const line of lines) {
     // Skip comments and empty lines
     if (line.startsWith('#') || !line.trim()) continue;
 
-    // Parse metric lines
+    // Parse metric lines - extract the numeric value at the end
     if (line.startsWith('aureo_vpn_bytes_received_total')) {
-      const match = line.match(/aureo_vpn_bytes_received_total\s+(\d+\.?\d*)/);
+      const match = line.match(new RegExp(`aureo_vpn_bytes_received_total\\s+(${numberPattern.source})`, 'i'));
       if (match) metrics.bytesReceived = parseFloat(match[1]);
     }
     else if (line.startsWith('aureo_vpn_bytes_sent_total')) {
-      const match = line.match(/aureo_vpn_bytes_sent_total\s+(\d+\.?\d*)/);
+      const match = line.match(new RegExp(`aureo_vpn_bytes_sent_total\\s+(${numberPattern.source})`, 'i'));
       if (match) metrics.bytesSent = parseFloat(match[1]);
     }
     else if (line.startsWith('aureo_vpn_node_memory_usage_percent')) {
-      const match = line.match(/aureo_vpn_node_memory_usage_percent\{[^}]*\}\s+(\d+\.?\d*)/);
+      const match = line.match(new RegExp(`aureo_vpn_node_memory_usage_percent\\{[^}]*\\}\\s+(${numberPattern.source})`, 'i'));
       if (match) metrics.memoryUsagePercent = parseFloat(match[1]);
     }
     else if (line.startsWith('aureo_vpn_node_cpu_usage_percent')) {
-      const match = line.match(/aureo_vpn_node_cpu_usage_percent\{[^}]*\}\s+(\d+\.?\d*)/);
+      const match = line.match(new RegExp(`aureo_vpn_node_cpu_usage_percent\\{[^}]*\\}\\s+(${numberPattern.source})`, 'i'));
       if (match) metrics.cpuUsagePercent = parseFloat(match[1]);
     }
     else if (line.startsWith('aureo_vpn_active_connections')) {
-      const match = line.match(/aureo_vpn_active_connections\{[^}]*\}\s+(\d+\.?\d*)/);
+      const match = line.match(new RegExp(`aureo_vpn_active_connections\\{[^}]*\\}\\s+(${numberPattern.source})`, 'i'));
       if (match) metrics.activeConnections = parseFloat(match[1]);
     }
     else if (line.startsWith('aureo_p2p_connected_peers')) {
-      const match = line.match(/aureo_p2p_connected_peers\s+(\d+\.?\d*)/);
+      const match = line.match(new RegExp(`aureo_p2p_connected_peers\\s+(${numberPattern.source})`, 'i'));
       if (match) metrics.p2pConnectedPeers = parseFloat(match[1]);
     }
     else if (line.startsWith('aureo_p2p_known_nodes')) {
-      const match = line.match(/aureo_p2p_known_nodes\s+(\d+\.?\d*)/);
+      const match = line.match(new RegExp(`aureo_p2p_known_nodes\\s+(${numberPattern.source})`, 'i'));
       if (match) metrics.p2pKnownNodes = parseFloat(match[1]);
     }
     else if (line.startsWith('aureo_vpn_node_load_score')) {
-      const match = line.match(/aureo_vpn_node_load_score\{[^}]*\}\s+(\d+\.?\d*)/);
+      const match = line.match(new RegExp(`aureo_vpn_node_load_score\\{[^}]*\\}\\s+(${numberPattern.source})`, 'i'));
       if (match) metrics.nodeLoadScore = parseFloat(match[1]);
     }
   }
