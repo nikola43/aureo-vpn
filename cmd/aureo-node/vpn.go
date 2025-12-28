@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/nikola43/aureo-vpn/pkg/database"
+	"github.com/nikola43/aureo-vpn/pkg/metrics"
 	"github.com/nikola43/aureo-vpn/pkg/models"
 )
 
@@ -261,56 +263,128 @@ func (v *VPNService) allocateIP() string {
 }
 
 func (v *VPNService) sessionMonitor() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
+	// Check sessions every minute for cleanup
+	sessionTicker := time.NewTicker(1 * time.Minute)
+	// Update traffic metrics every 5 seconds for real-time dashboard
+	trafficTicker := time.NewTicker(5 * time.Second)
+	defer sessionTicker.Stop()
+	defer trafficTicker.Stop()
 
 	for {
 		select {
 		case <-v.ctx.Done():
 			return
-		case <-ticker.C:
+		case <-trafficTicker.C:
+			v.updateTrafficMetrics()
+		case <-sessionTicker.C:
 			v.checkSessions()
 		}
 	}
 }
 
-func (v *VPNService) checkSessions() {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-
+// updateTrafficMetrics reads WireGuard stats and updates Prometheus metrics
+func (v *VPNService) updateTrafficMetrics() {
 	// Get WireGuard peer stats
 	output, err := exec.Command("wg", "show", "wg0", "dump").Output()
 	if err != nil {
 		return
 	}
 
-	// Parse peer stats
-	peerStats := make(map[string]time.Time)
+	var totalRxBytes, totalTxBytes int64
+
 	lines := strings.Split(string(output), "\n")
-	for _, line := range lines[1:] { // Skip header
+	for _, line := range lines[1:] { // Skip first line (interface info)
 		fields := strings.Fields(line)
-		if len(fields) >= 5 {
-			pubKey := fields[0]
-			handshake := fields[4]
-			if handshake != "0" {
-				// Parse handshake timestamp
-				var ts int64
-				fmt.Sscanf(handshake, "%d", &ts)
-				if ts > 0 {
-					peerStats[pubKey] = time.Unix(ts, 0)
-				}
+		if len(fields) >= 7 {
+			rxBytesStr := fields[5]
+			txBytesStr := fields[6]
+
+			if rx, err := strconv.ParseInt(rxBytesStr, 10, 64); err == nil {
+				totalRxBytes += rx
+			}
+			if tx, err := strconv.ParseInt(txBytesStr, 10, 64); err == nil {
+				totalTxBytes += tx
 			}
 		}
 	}
 
-	// Check for inactive sessions
-	for sessionID, info := range v.sessions {
-		if lastSeen, ok := peerStats[info.PublicKey]; ok {
-			info.LastKeepalive = lastSeen
+	// Calculate delta and update Prometheus counters
+	v.mu.Lock()
+	if v.totalBytesIn > 0 || v.totalBytesOut > 0 {
+		rxDelta := totalRxBytes - v.totalBytesIn
+		txDelta := totalTxBytes - v.totalBytesOut
+		if rxDelta > 0 {
+			metrics.VPNBytesReceived.Add(float64(rxDelta))
+		}
+		if txDelta > 0 {
+			metrics.VPNBytesSent.Add(float64(txDelta))
+		}
+	}
+	v.totalBytesIn = totalRxBytes
+	v.totalBytesOut = totalTxBytes
+	v.mu.Unlock()
+}
+
+func (v *VPNService) checkSessions() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	// Get WireGuard peer stats for session management
+	output, err := exec.Command("wg", "show", "wg0", "dump").Output()
+	if err != nil {
+		return
+	}
+
+	// Parse peer stats (handshake times and traffic)
+	type peerInfo struct {
+		lastHandshake time.Time
+		rxBytes       int64
+		txBytes       int64
+	}
+	peerStats := make(map[string]peerInfo)
+
+	lines := strings.Split(string(output), "\n")
+	for _, line := range lines[1:] { // Skip first line (interface info)
+		fields := strings.Fields(line)
+		if len(fields) >= 7 {
+			pubKey := fields[0]
+			handshake := fields[4]
+			rxBytesStr := fields[5]
+			txBytesStr := fields[6]
+
+			info := peerInfo{}
+
+			// Parse handshake timestamp
+			if handshake != "0" {
+				var ts int64
+				fmt.Sscanf(handshake, "%d", &ts)
+				if ts > 0 {
+					info.lastHandshake = time.Unix(ts, 0)
+				}
+			}
+
+			// Parse traffic bytes
+			if rx, err := strconv.ParseInt(rxBytesStr, 10, 64); err == nil {
+				info.rxBytes = rx
+			}
+			if tx, err := strconv.ParseInt(txBytesStr, 10, 64); err == nil {
+				info.txBytes = tx
+			}
+
+			peerStats[pubKey] = info
+		}
+	}
+
+	// Check for inactive sessions and update per-session stats
+	for sessionID, sessionInfo := range v.sessions {
+		if peerData, ok := peerStats[sessionInfo.PublicKey]; ok {
+			sessionInfo.LastKeepalive = peerData.lastHandshake
+			sessionInfo.BytesIn = peerData.rxBytes
+			sessionInfo.BytesOut = peerData.txBytes
 		}
 
 		// Disconnect if no activity for 10 minutes
-		if time.Since(info.LastKeepalive) > 10*time.Minute {
+		if time.Since(sessionInfo.LastKeepalive) > 10*time.Minute {
 			log.Printf("[VPN] Session %s inactive, disconnecting", sessionID)
 			v.disconnectSessionLocked(sessionID)
 		}
