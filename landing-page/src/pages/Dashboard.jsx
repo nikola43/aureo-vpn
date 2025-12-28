@@ -1,8 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../context/AuthContext';
-import { nodesApi, sessionsApi, operatorApi } from '../services/api';
+import { authApi, nodesApi, sessionsApi, vpnApi, metricsApi } from '../services/api';
+import {
+  AreaChart,
+  Area,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend
+} from 'recharts';
 import {
   Shield,
   Globe,
@@ -36,7 +48,10 @@ import {
   Wifi,
   WifiOff,
   Menu,
-  X
+  X,
+  Network,
+  HardDrive,
+  Cpu
 } from 'lucide-react';
 
 // Stats Card Component
@@ -67,6 +82,72 @@ function StatCard({ icon: Icon, label, value, subValue, color = 'gold', trend })
       <div className="text-3xl font-bold text-white mb-1">{value}</div>
       <div className="text-gray-400 text-sm">{label}</div>
       {subValue && <div className="text-gray-500 text-xs mt-1">{subValue}</div>}
+    </motion.div>
+  );
+}
+
+// Grafana-style Big Stat Card
+function BigStatCard({ label, value, status, color = 'blue' }) {
+  const bgColors = {
+    blue: 'bg-blue-600',
+    green: 'bg-green-600',
+    yellow: 'bg-yellow-600',
+    red: 'bg-red-600',
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-dark-900 rounded-lg overflow-hidden"
+    >
+      <div className="px-4 py-2 border-b border-white/5">
+        <h3 className="text-sm font-medium text-gray-400">{label}</h3>
+      </div>
+      {status ? (
+        <div className={`${bgColors[color]} py-6 flex items-center justify-center`}>
+          <span className="text-3xl font-bold text-white">{value}</span>
+        </div>
+      ) : (
+        <div className="py-6 flex items-center justify-center">
+          <span className="text-4xl font-bold text-blue-400">{value}</span>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// Custom Tooltip for charts
+const CustomTooltip = ({ active, payload, label }) => {
+  if (active && payload && payload.length) {
+    return (
+      <div className="bg-dark-800 border border-white/10 rounded-lg p-3 shadow-xl">
+        <p className="text-gray-400 text-xs mb-1">{label}</p>
+        {payload.map((entry, index) => (
+          <p key={index} className="text-sm" style={{ color: entry.color }}>
+            {entry.name}: {entry.value}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
+// Chart Panel Component
+function ChartPanel({ title, children }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-dark-900 rounded-lg overflow-hidden"
+    >
+      <div className="px-4 py-3 border-b border-white/5">
+        <h3 className="text-sm font-medium text-gray-300">{title}</h3>
+      </div>
+      <div className="p-4 h-64">
+        {children}
+      </div>
     </motion.div>
   );
 }
@@ -200,10 +281,29 @@ export default function Dashboard() {
   // Stats
   const [stats, setStats] = useState({
     totalData: '0 GB',
-    sessionsToday: 0,
-    avgSpeed: '0 Mbps',
-    uptime: '0%',
+    sessionsCount: 0,
+    plan: 'Free',
+    nodesCount: 0,
   });
+  const [loadingStats, setLoadingStats] = useState(true);
+
+  // Node & P2P Metrics (Grafana-style)
+  const [nodeMetrics, setNodeMetrics] = useState({
+    activeConnections: 0,
+    p2pConnectedPeers: 0,
+    knownNodes: 0,
+    nodeStatus: 'DOWN',
+    loadScore: 0,
+  });
+
+  // Time series data for charts
+  const [trafficData, setTrafficData] = useState([]);
+  const [connectionsData, setConnectionsData] = useState([]);
+  const [memoryData, setMemoryData] = useState([]);
+  const [p2pData, setP2pData] = useState([]);
+
+  // Refs for tracking previous metric values (for calculating deltas)
+  const prevMetrics = useRef({ bytesReceived: 0, bytesSent: 0 });
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -212,16 +312,58 @@ export default function Dashboard() {
     }
   }, [isAuthenticated, authLoading, navigate]);
 
+  // Fetch user stats from /me endpoint
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const response = await authApi.getProfile();
+        const userData = response.data;
+
+        // Format data usage
+        const dataKb = userData.total_data_used_kb || 0;
+        let totalData = '0 GB';
+        if (dataKb >= 1048576) { // 1 GB in KB
+          totalData = `${(dataKb / 1048576).toFixed(2)} GB`;
+        } else if (dataKb >= 1024) { // 1 MB in KB
+          totalData = `${(dataKb / 1024).toFixed(2)} MB`;
+        } else {
+          totalData = `${dataKb} KB`;
+        }
+
+        setStats(prev => ({
+          ...prev,
+          totalData,
+          sessionsCount: userData.session_count || 0,
+          plan: userData.plan || 'Free',
+        }));
+      } catch (error) {
+        console.error('Failed to fetch stats:', error);
+      } finally {
+        setLoadingStats(false);
+      }
+    };
+
+    if (isAuthenticated) {
+      fetchStats();
+    }
+  }, [isAuthenticated]);
+
   // Fetch nodes
   useEffect(() => {
     const fetchNodes = async () => {
       try {
         const response = await nodesApi.list();
-        setNodes(response.data.nodes || response.data || []);
+        const nodesData = response.data.nodes || response.data || [];
+        setNodes(nodesData);
+        setStats(prev => ({
+          ...prev,
+          nodesCount: response.data.count || nodesData.length,
+        }));
       } catch (error) {
         console.error('Failed to fetch nodes:', error);
         // Use mock data if API fails
         setNodes(mockNodes);
+        setStats(prev => ({ ...prev, nodesCount: mockNodes.length }));
       } finally {
         setLoadingNodes(false);
       }
@@ -232,17 +374,112 @@ export default function Dashboard() {
     }
   }, [isAuthenticated]);
 
+  // Fetch node metrics and P2P status (Grafana-style)
+  const fetchMetrics = useCallback(async () => {
+    const now = new Date();
+    const timeLabel = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+
+    try {
+      // Fetch all metrics in parallel
+      const [nodeInfoRes, p2pStatusRes, prometheusRes] = await Promise.allSettled([
+        metricsApi.getNodeInfo(),
+        metricsApi.getP2PStatus(),
+        metricsApi.getPrometheusMetrics(),
+      ]);
+
+      const nodeInfo = nodeInfoRes.status === 'fulfilled' ? nodeInfoRes.value.data : null;
+      const p2pStatus = p2pStatusRes.status === 'fulfilled' ? p2pStatusRes.value.data : null;
+      const promMetrics = prometheusRes.status === 'fulfilled' ? prometheusRes.value : null;
+
+      // Update node metrics (stat cards)
+      setNodeMetrics({
+        activeConnections: nodeInfo?.current_connections || promMetrics?.activeConnections || 0,
+        p2pConnectedPeers: p2pStatus?.connected_peers || promMetrics?.p2pConnectedPeers || 0,
+        knownNodes: p2pStatus?.known_nodes || promMetrics?.p2pKnownNodes || 0,
+        nodeStatus: nodeInfo?.status === 'online' ? 'UP' : 'DOWN',
+        loadScore: nodeInfo?.load_score || promMetrics?.nodeLoadScore || 0,
+      });
+
+      // Calculate traffic delta (bytes per interval) from Prometheus counters
+      const currentBytesReceived = promMetrics?.bytesReceived || 0;
+      const currentBytesSent = promMetrics?.bytesSent || 0;
+
+      // Calculate delta since last poll (rate)
+      let receivedDelta = 0;
+      let sentDelta = 0;
+
+      if (prevMetrics.current.bytesReceived > 0) {
+        receivedDelta = Math.max(0, currentBytesReceived - prevMetrics.current.bytesReceived);
+        sentDelta = Math.max(0, currentBytesSent - prevMetrics.current.bytesSent);
+      }
+
+      // Store current values for next delta calculation
+      prevMetrics.current = {
+        bytesReceived: currentBytesReceived,
+        bytesSent: currentBytesSent,
+      };
+
+      // Update time series data (keep last 20 points)
+      setTrafficData(prev => {
+        const newData = [...prev, {
+          time: timeLabel,
+          received: receivedDelta,
+          sent: sentDelta,
+        }];
+        return newData.slice(-20);
+      });
+
+      setConnectionsData(prev => {
+        const newData = [...prev, {
+          time: timeLabel,
+          connections: nodeInfo?.current_connections || promMetrics?.activeConnections || 0,
+        }];
+        return newData.slice(-20);
+      });
+
+      // Memory usage from Prometheus (or estimate based on load)
+      const memoryPercent = promMetrics?.memoryUsagePercent || (nodeInfo?.load_score || 0) * 1.5;
+      setMemoryData(prev => {
+        const newData = [...prev, {
+          time: timeLabel,
+          memory: Math.round(memoryPercent),
+        }];
+        return newData.slice(-20);
+      });
+
+      setP2pData(prev => {
+        const newData = [...prev, {
+          time: timeLabel,
+          connectedPeers: p2pStatus?.connected_peers || promMetrics?.p2pConnectedPeers || 0,
+          knownNodes: p2pStatus?.known_nodes || promMetrics?.p2pKnownNodes || 0,
+        }];
+        return newData.slice(-20);
+      });
+    } catch (error) {
+      console.error('Failed to fetch metrics:', error);
+    }
+  }, []);
+
+  // Poll metrics every 5 seconds
+  useEffect(() => {
+    if (isAuthenticated) {
+      fetchMetrics(); // Initial fetch
+      const interval = setInterval(fetchMetrics, 5000);
+      return () => clearInterval(interval);
+    }
+  }, [isAuthenticated, fetchMetrics]);
+
   const handleConnect = async (node) => {
     setIsConnecting(true);
     try {
-      await sessionsApi.create({
+      await vpnApi.connect({
         node_id: node.id,
         protocol: 'wireguard',
       });
       setConnectedNode(node);
     } catch (error) {
       console.error('Connection failed:', error);
-      // Mock connection for demo
+      // Mock connection for demo (web can't actually connect to VPN)
       setConnectedNode(node);
     } finally {
       setIsConnecting(false);
@@ -433,27 +670,26 @@ export default function Dashboard() {
               <StatCard
                 icon={Activity}
                 label="Data Transferred"
-                value={stats.totalData}
-                subValue="This month"
+                value={loadingStats ? '...' : stats.totalData}
+                subValue="Total usage"
                 color="gold"
               />
               <StatCard
                 icon={Zap}
-                label="Sessions Today"
-                value={stats.sessionsToday}
+                label="Total Sessions"
+                value={loadingStats ? '...' : stats.sessionsCount}
                 color="blue"
               />
               <StatCard
-                icon={TrendingUp}
-                label="Avg Speed"
-                value={stats.avgSpeed}
+                icon={Server}
+                label="Available Nodes"
+                value={loadingNodes ? '...' : stats.nodesCount}
                 color="green"
-                trend={12}
               />
               <StatCard
-                icon={Clock}
-                label="Uptime"
-                value={stats.uptime}
+                icon={Wallet}
+                label="Current Plan"
+                value={loadingStats ? '...' : stats.plan}
                 color="purple"
               />
             </div>
@@ -514,6 +750,147 @@ export default function Dashboard() {
                   )}
                 </div>
               )}
+            </motion.div>
+
+            {/* Grafana-style Metrics Section */}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2 }}
+              className="mb-8"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-bold text-white">Network Metrics</h2>
+                <div className="flex items-center gap-2 text-gray-400 text-sm">
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Live updates every 5s</span>
+                </div>
+              </div>
+
+              {/* Big Stat Cards - Grafana Style */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <BigStatCard
+                  label="Active VPN Connections"
+                  value={nodeMetrics.activeConnections}
+                />
+                <BigStatCard
+                  label="P2P Connected Peers"
+                  value={nodeMetrics.p2pConnectedPeers}
+                />
+                <BigStatCard
+                  label="Known VPN Nodes"
+                  value={nodeMetrics.knownNodes}
+                />
+                <BigStatCard
+                  label="Node Status"
+                  value={nodeMetrics.nodeStatus}
+                  status={true}
+                  color={nodeMetrics.nodeStatus === 'UP' ? 'green' : 'red'}
+                />
+              </div>
+
+              {/* Charts Grid */}
+              <div className="grid lg:grid-cols-2 gap-4">
+                {/* Network Traffic Chart */}
+                <ChartPanel title="Network Traffic">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={trafficData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                      <XAxis dataKey="time" stroke="#6B7280" tick={{ fontSize: 10 }} />
+                      <YAxis stroke="#6B7280" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v} B`} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
+                      <Area
+                        type="monotone"
+                        dataKey="received"
+                        name="Received"
+                        stroke="#10B981"
+                        fill="#10B981"
+                        fillOpacity={0.3}
+                      />
+                      <Area
+                        type="monotone"
+                        dataKey="sent"
+                        name="Sent"
+                        stroke="#F59E0B"
+                        fill="#F59E0B"
+                        fillOpacity={0.3}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </ChartPanel>
+
+                {/* VPN Connections Over Time */}
+                <ChartPanel title="VPN Connections Over Time">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={connectionsData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                      <XAxis dataKey="time" stroke="#6B7280" tick={{ fontSize: 10 }} />
+                      <YAxis stroke="#6B7280" tick={{ fontSize: 10 }} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
+                      <Line
+                        type="monotone"
+                        dataKey="connections"
+                        name="Active Connections"
+                        stroke="#3B82F6"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </ChartPanel>
+
+                {/* Memory Usage Chart */}
+                <ChartPanel title="Memory Usage">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={memoryData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                      <XAxis dataKey="time" stroke="#6B7280" tick={{ fontSize: 10 }} />
+                      <YAxis stroke="#6B7280" tick={{ fontSize: 10 }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
+                      <Area
+                        type="monotone"
+                        dataKey="memory"
+                        name="Memory %"
+                        stroke="#8B5CF6"
+                        fill="#8B5CF6"
+                        fillOpacity={0.3}
+                      />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </ChartPanel>
+
+                {/* P2P Network Chart */}
+                <ChartPanel title="P2P Network">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={p2pData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                      <XAxis dataKey="time" stroke="#6B7280" tick={{ fontSize: 10 }} />
+                      <YAxis stroke="#6B7280" tick={{ fontSize: 10 }} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
+                      <Line
+                        type="monotone"
+                        dataKey="connectedPeers"
+                        name="Connected Peers"
+                        stroke="#10B981"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                      <Line
+                        type="monotone"
+                        dataKey="knownNodes"
+                        name="Known Nodes"
+                        stroke="#6366F1"
+                        strokeWidth={2}
+                        dot={false}
+                      />
+                    </LineChart>
+                  </ResponsiveContainer>
+                </ChartPanel>
+              </div>
             </motion.div>
           </>
         )}

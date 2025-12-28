@@ -1,8 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -21,65 +25,210 @@ var (
 var connectCmd = &cobra.Command{
 	Use:   "connect",
 	Short: "Connect to a VPN node",
-	Long: `Connect to a VPN node using WireGuard or OpenVPN.
+	Long: `Connect to a VPN node using WireGuard.
 
 Examples:
-  aureo connect                              # Connect to the best available node
+  aureo connect                              # Interactive node selection
   aureo connect --node <node-id>             # Connect to a specific node
   aureo connect --country US                 # Connect to a node in the US
-  aureo connect --protocol wireguard         # Use WireGuard protocol
-  aureo connect --best --country DE          # Connect to the best node in Germany`,
+  aureo connect --best                       # Connect to the best available node`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !APIClient.IsAuthenticated() {
 			return fmt.Errorf("not logged in. Use 'aureo login' first")
 		}
 
-		// Determine which node to connect to
-		nodeID := connectNodeID
+		// Check if already connected
+		if APIClient.IsConnected() {
+			state, _ := APIClient.LoadConnectionState()
+			fmt.Printf("Already connected to %s\n", state.NodeName)
+			fmt.Println("Use 'aureo disconnect' first")
+			return nil
+		}
 
-		if nodeID == "" {
-			// Find the best node
-			fmt.Println("Finding best available node...")
-			node, err := APIClient.GetBestNode(connectCountry, connectProtocol)
+		// Check for WireGuard tools
+		if !checkWireGuardInstalled() {
+			return fmt.Errorf("WireGuard not installed. Install with: brew install wireguard-tools")
+		}
+
+		var selectedNode *client.VPNNode
+		var err error
+
+		if connectNodeID != "" {
+			// Specific node requested
+			selectedNode, err = APIClient.GetNode(connectNodeID)
 			if err != nil {
-				return fmt.Errorf("failed to find node: %w", err)
+				return fmt.Errorf("failed to get node: %w", err)
 			}
-			nodeID = node.ID.String()
-			fmt.Printf("Selected: %s (%s, %s)\n", node.Name, node.City, node.CountryCode)
+		} else if connectBest || connectCountry != "" {
+			// Best node requested
+			fmt.Println("Finding best available node...")
+			selectedNode, err = APIClient.GetBestNode(connectCountry, "wireguard")
+			if err != nil {
+				return fmt.Errorf("failed to find best node: %w", err)
+			}
+			fmt.Printf("Selected: %s (%s, %s)\n", selectedNode.Name, selectedNode.City, selectedNode.Country)
+		} else {
+			// Interactive selection
+			selectedNode, err = selectNodeInteractively()
+			if err != nil {
+				return err
+			}
 		}
 
-		// Default to WireGuard if not specified
-		protocol := connectProtocol
-		if protocol == "" {
-			protocol = "wireguard"
-		}
-
-		fmt.Printf("Connecting via %s...\n", protocol)
-
-		session, err := APIClient.CreateSession(nodeID, protocol)
-		if err != nil {
-			return fmt.Errorf("failed to connect: %w", err)
-		}
-
-		fmt.Println()
-		fmt.Println("Connected successfully!")
-		fmt.Println("=======================")
-		fmt.Printf("Session ID:  %s\n", session.ID)
-		fmt.Printf("Protocol:    %s\n", session.Protocol)
-		fmt.Printf("Tunnel IP:   %s\n", session.TunnelIP)
-		fmt.Printf("Connected:   %s\n", session.ConnectedAt.Format(time.RFC3339))
-
-		if session.Node != nil {
-			fmt.Printf("Node:        %s (%s)\n", session.Node.Name, session.Node.CountryCode)
-		}
-
-		fmt.Println()
-		fmt.Println("Your internet traffic is now encrypted and routed through the VPN.")
-		fmt.Println("Use 'aureo status' to check connection status.")
-		fmt.Println("Use 'aureo disconnect' to disconnect.")
-
-		return nil
+		return connectToNode(selectedNode)
 	},
+}
+
+// selectNodeInteractively shows a list of nodes for user to select
+func selectNodeInteractively() (*client.VPNNode, error) {
+	fmt.Println("Fetching available nodes...")
+	fmt.Println()
+
+	resp, err := APIClient.GetNodes("", "")
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch nodes: %w", err)
+	}
+
+	if len(resp.Nodes) == 0 {
+		return nil, fmt.Errorf("no nodes available")
+	}
+
+	fmt.Println("Available Nodes:")
+	fmt.Println()
+
+	for i, node := range resp.Nodes {
+		statusColor := "[OK]"
+		if node.Status != "online" {
+			statusColor = "[!]"
+		}
+
+		location := node.City
+		if location != "" && node.Country != "" {
+			location += ", " + node.Country
+		} else if node.Country != "" {
+			location = node.Country
+		}
+
+		fmt.Printf("  [%d] %s %s\n", i+1, statusColor, node.Name)
+		fmt.Printf("      Location: %s\n", location)
+		fmt.Printf("      IP: %s\n", node.PublicIP)
+		fmt.Println()
+	}
+
+	// Get user selection
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Printf("Select node [1-%d]: ", len(resp.Nodes))
+	input, _ := reader.ReadString('\n')
+	input = strings.TrimSpace(input)
+
+	selection, err := strconv.Atoi(input)
+	if err != nil || selection < 1 || selection > len(resp.Nodes) {
+		return nil, fmt.Errorf("invalid selection")
+	}
+
+	return &resp.Nodes[selection-1], nil
+}
+
+// connectToNode handles the actual connection process
+func connectToNode(node *client.VPNNode) error {
+	fmt.Println()
+	fmt.Printf("Connecting to %s...\n", node.Name)
+	fmt.Println()
+
+	// Generate WireGuard keys
+	fmt.Println("Generating WireGuard keys...")
+	privateKey, publicKey, err := generateWireGuardKeys()
+	if err != nil {
+		return fmt.Errorf("failed to generate keys: %w", err)
+	}
+
+	// Register with VPN server
+	fmt.Println("Registering with VPN server...")
+	config, err := APIClient.GenerateWireGuardConfig(node.ID.String(), publicKey)
+	if err != nil {
+		return fmt.Errorf("failed to register: %w", err)
+	}
+
+	if config.ServerPublicKey == "" {
+		return fmt.Errorf("server did not return public key")
+	}
+
+	fmt.Printf("  Your VPN IP: %s\n", config.ClientIP)
+	fmt.Printf("  Server: %s\n", config.ServerEndpoint)
+	fmt.Println()
+
+	// Create WireGuard config file
+	fmt.Println("Creating WireGuard configuration...")
+	wgConfigPath := APIClient.GetWireGuardConfigPath()
+
+	dns := config.DNS
+	if dns == "" {
+		dns = "1.1.1.1,8.8.8.8"
+	}
+
+	allowedIPs := config.AllowedIPs
+	if allowedIPs == "" {
+		allowedIPs = "0.0.0.0/0"
+	}
+
+	keepalive := config.Keepalive
+	if keepalive == 0 {
+		keepalive = 25
+	}
+
+	wgConfig := fmt.Sprintf(`[Interface]
+PrivateKey = %s
+Address = %s/32
+DNS = %s
+
+[Peer]
+PublicKey = %s
+Endpoint = %s
+AllowedIPs = %s
+PersistentKeepalive = %d
+`, privateKey, config.ClientIP, dns, config.ServerPublicKey, config.ServerEndpoint, allowedIPs, keepalive)
+
+	if err := os.WriteFile(wgConfigPath, []byte(wgConfig), 0600); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
+	}
+
+	// Connect via WireGuard
+	fmt.Println("Starting VPN tunnel...")
+	if err := runWgQuickUp(wgConfigPath); err != nil {
+		// Clean up config file on failure
+		os.Remove(wgConfigPath)
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+
+	// Save connection state
+	state := &client.ConnectionState{
+		NodeID:      node.ID.String(),
+		NodeName:    node.Name,
+		NodeIP:      node.PublicIP,
+		ClientIP:    config.ClientIP,
+		ConnectedAt: time.Now(),
+		SessionID:   config.SessionID,
+	}
+	if err := APIClient.SaveConnectionState(state); err != nil {
+		fmt.Printf("Warning: failed to save connection state: %v\n", err)
+	}
+
+	fmt.Println()
+	fmt.Println("========================================")
+	fmt.Printf("  Connected to %s\n", node.Name)
+	fmt.Println("========================================")
+	fmt.Println()
+	fmt.Printf("  Your IP: %s\n", node.PublicIP)
+	if node.City != "" {
+		fmt.Printf("  Location: %s, %s\n", node.City, node.Country)
+	} else {
+		fmt.Printf("  Location: %s\n", node.Country)
+	}
+	fmt.Println()
+	fmt.Println("VPN is active. To disconnect, run: aureo disconnect")
+	fmt.Println()
+
+	return nil
 }
 
 var disconnectSessionID string
@@ -88,59 +237,32 @@ var disconnectSessionID string
 var disconnectCmd = &cobra.Command{
 	Use:   "disconnect",
 	Short: "Disconnect from VPN",
-	Long: `Disconnect from the current VPN session or a specific session.
-
-Examples:
-  aureo disconnect                    # Disconnect all active sessions
-  aureo disconnect --session <id>     # Disconnect a specific session`,
+	Long:  `Disconnect from the current VPN connection.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !APIClient.IsAuthenticated() {
-			return fmt.Errorf("not logged in")
-		}
-
-		if disconnectSessionID != "" {
-			// Disconnect specific session
-			if err := APIClient.DisconnectSession(disconnectSessionID); err != nil {
-				return fmt.Errorf("failed to disconnect: %w", err)
-			}
-			fmt.Printf("Disconnected session %s\n", truncateID(disconnectSessionID))
+		if !APIClient.IsConnected() {
+			fmt.Println("Not connected")
 			return nil
 		}
 
-		// Disconnect all active sessions
-		resp, err := APIClient.GetActiveSessions()
+		state, err := APIClient.LoadConnectionState()
 		if err != nil {
-			return fmt.Errorf("failed to get sessions: %w", err)
-		}
-
-		activeSessions := 0
-		for _, session := range resp.Sessions {
-			if session.Status == "active" {
-				activeSessions++
-			}
-		}
-
-		if activeSessions == 0 {
-			fmt.Println("No active VPN sessions")
+			fmt.Println("No active connection found")
 			return nil
 		}
 
-		fmt.Printf("Disconnecting %d active session(s)...\n", activeSessions)
+		fmt.Printf("Disconnecting from %s...\n", state.NodeName)
 
-		disconnected := 0
-		for _, session := range resp.Sessions {
-			if session.Status == "active" {
-				if err := APIClient.DisconnectSession(session.ID.String()); err != nil {
-					fmt.Printf("Failed to disconnect session %s: %v\n", truncateID(session.ID.String()), err)
-				} else {
-					disconnected++
-				}
-			}
+		// Stop WireGuard
+		wgConfigPath := APIClient.GetWireGuardConfigPath()
+		if err := runWgQuickDown(wgConfigPath); err != nil {
+			fmt.Printf("Warning: %v\n", err)
 		}
 
-		fmt.Printf("\nDisconnected %d session(s)\n", disconnected)
-		fmt.Println("Your internet traffic is no longer routed through the VPN.")
+		// Clean up files
+		os.Remove(wgConfigPath)
+		APIClient.ClearConnectionState()
 
+		fmt.Println("Disconnected")
 		return nil
 	},
 }
@@ -149,73 +271,55 @@ Examples:
 var statusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show VPN connection status",
-	Long: `Show the current VPN connection status and active sessions.
-
-Examples:
-  aureo status                        # Show all active sessions
-  aureo status --session <id>         # Show details of a specific session`,
+	Long:  `Show the current VPN connection status.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !APIClient.IsAuthenticated() {
-			fmt.Println("Status: Not logged in")
+		email, username := APIClient.GetCurrentUser()
+
+		fmt.Println("Aureo VPN Status")
+		fmt.Println("================")
+		fmt.Println()
+
+		// Auth status
+		if APIClient.IsAuthenticated() {
+			fmt.Printf("User: %s (%s)\n", username, email)
+		} else {
+			fmt.Println("User: Not logged in")
+			fmt.Println()
 			fmt.Println("Use 'aureo login' to authenticate")
 			return nil
 		}
 
-		resp, err := APIClient.GetActiveSessions()
-		if err != nil {
-			return fmt.Errorf("failed to get sessions: %w", err)
-		}
-
-		// Count active sessions
-		activeSessions := []client.Session{}
-		for _, session := range resp.Sessions {
-			if session.Status == "active" {
-				activeSessions = append(activeSessions, session)
-			}
-		}
-
-		email, username := APIClient.GetCurrentUser()
-		fmt.Printf("User: %s (%s)\n", username, email)
 		fmt.Println()
 
-		if len(activeSessions) == 0 {
+		// Connection status
+		if !APIClient.IsConnected() {
 			fmt.Println("Status: Disconnected")
 			fmt.Println()
-			fmt.Println("No active VPN sessions")
 			fmt.Println("Use 'aureo connect' to establish a connection")
 			return nil
 		}
 
-		fmt.Printf("Status: Connected (%d active session%s)\n", len(activeSessions), pluralize(len(activeSessions)))
-		fmt.Println()
-
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "SESSION\tNODE\tPROTOCOL\tTUNNEL IP\tDATA\tDURATION\tLATENCY")
-		fmt.Fprintln(w, "-------\t----\t--------\t---------\t----\t--------\t-------")
-
-		for _, session := range activeSessions {
-			nodeName := "Unknown"
-			if session.Node != nil {
-				nodeName = session.Node.Name
-			}
-
-			duration := time.Since(session.ConnectedAt)
-			durationStr := formatDuration(duration)
-
-			dataStr := formatBytes(session.BytesSent + session.BytesReceived)
-
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%dms\n",
-				truncateID(session.ID.String()),
-				nodeName,
-				session.Protocol,
-				session.TunnelIP,
-				dataStr,
-				durationStr,
-				session.Latency,
-			)
+		state, err := APIClient.LoadConnectionState()
+		if err != nil {
+			fmt.Println("Status: Unknown")
+			return nil
 		}
 
-		w.Flush()
+		duration := time.Since(state.ConnectedAt)
+
+		fmt.Println("Status: Connected")
+		fmt.Println()
+		fmt.Printf("  Node: %s\n", state.NodeName)
+		fmt.Printf("  Server IP: %s\n", state.NodeIP)
+		fmt.Printf("  Your VPN IP: %s\n", state.ClientIP)
+		fmt.Printf("  Connected: %s ago\n", formatDuration(duration))
+
+		// Try to get WireGuard stats
+		if stats := getWireGuardStats(); stats != "" {
+			fmt.Println()
+			fmt.Println("Traffic:")
+			fmt.Println(stats)
+		}
 
 		return nil
 	},
@@ -225,65 +329,36 @@ Examples:
 var sessionsCmd = &cobra.Command{
 	Use:   "sessions",
 	Short: "List VPN sessions",
-	Long: `List all VPN sessions including connection history.
-
-Examples:
-  aureo sessions                      # List all sessions
-  aureo sessions --active             # List only active sessions`,
+	Long:  `List VPN session information.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !APIClient.IsAuthenticated() {
 			return fmt.Errorf("not logged in. Use 'aureo login' first")
 		}
 
-		resp, err := APIClient.GetActiveSessions()
-		if err != nil {
-			return fmt.Errorf("failed to get sessions: %w", err)
-		}
+		// Check current connection
+		if APIClient.IsConnected() {
+			state, _ := APIClient.LoadConnectionState()
+			duration := time.Since(state.ConnectedAt)
 
-		if len(resp.Sessions) == 0 {
-			fmt.Println("No sessions found")
-			return nil
-		}
+			fmt.Println("Current Session")
+			fmt.Println("===============")
+			fmt.Println()
 
-		fmt.Printf("VPN Sessions (%d total)\n\n", resp.Count)
-
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "SESSION\tNODE\tSTATUS\tPROTOCOL\tDATA\tCONNECTED\tDURATION")
-		fmt.Fprintln(w, "-------\t----\t------\t--------\t----\t---------\t--------")
-
-		for _, session := range resp.Sessions {
-			nodeName := "Unknown"
-			if session.Node != nil {
-				nodeName = session.Node.Name
-			}
-
-			statusIcon := "[OK]"
-			if session.Status != "active" {
-				statusIcon = "[X]"
-			}
-
-			dataStr := formatBytes(session.BytesSent + session.BytesReceived)
-			connectedAt := session.ConnectedAt.Format("Jan 02 15:04")
-
-			var durationStr string
-			if session.DisconnectedAt != nil {
-				durationStr = formatDuration(session.DisconnectedAt.Sub(session.ConnectedAt))
-			} else {
-				durationStr = formatDuration(time.Since(session.ConnectedAt))
-			}
-
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-				truncateID(session.ID.String()),
-				nodeName,
-				statusIcon,
-				session.Protocol,
-				dataStr,
-				connectedAt,
-				durationStr,
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "NODE\tSERVER IP\tVPN IP\tDURATION")
+			fmt.Fprintln(w, "----\t---------\t------\t--------")
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+				state.NodeName,
+				state.NodeIP,
+				state.ClientIP,
+				formatDuration(duration),
 			)
+			w.Flush()
+		} else {
+			fmt.Println("No active session")
+			fmt.Println()
+			fmt.Println("Use 'aureo connect' to establish a connection")
 		}
-
-		w.Flush()
 
 		return nil
 	},
@@ -292,12 +367,88 @@ Examples:
 func init() {
 	// Connect flags
 	connectCmd.Flags().StringVarP(&connectNodeID, "node", "n", "", "Node ID to connect to")
-	connectCmd.Flags().StringVarP(&connectProtocol, "protocol", "p", "", "Protocol to use (wireguard, openvpn)")
+	connectCmd.Flags().StringVarP(&connectProtocol, "protocol", "p", "", "Protocol to use (wireguard)")
 	connectCmd.Flags().StringVarP(&connectCountry, "country", "c", "", "Country to connect to")
 	connectCmd.Flags().BoolVarP(&connectBest, "best", "b", false, "Connect to the best available node")
 
 	// Disconnect flags
 	disconnectCmd.Flags().StringVarP(&disconnectSessionID, "session", "s", "", "Session ID to disconnect")
+}
+
+// checkWireGuardInstalled checks if WireGuard tools are installed
+func checkWireGuardInstalled() bool {
+	_, err := exec.LookPath("wg")
+	if err != nil {
+		return false
+	}
+	_, err = exec.LookPath("wg-quick")
+	return err == nil
+}
+
+// generateWireGuardKeys generates a WireGuard key pair
+func generateWireGuardKeys() (privateKey, publicKey string, err error) {
+	// Generate private key
+	privCmd := exec.Command("wg", "genkey")
+	privOut, err := privCmd.Output()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate private key: %w", err)
+	}
+	privateKey = strings.TrimSpace(string(privOut))
+
+	// Generate public key from private key
+	pubCmd := exec.Command("wg", "pubkey")
+	pubCmd.Stdin = strings.NewReader(privateKey)
+	pubOut, err := pubCmd.Output()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to generate public key: %w", err)
+	}
+	publicKey = strings.TrimSpace(string(pubOut))
+
+	return privateKey, publicKey, nil
+}
+
+// runWgQuickUp starts the WireGuard tunnel
+func runWgQuickUp(configPath string) error {
+	cmd := exec.Command("sudo", "wg-quick", "up", configPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// runWgQuickDown stops the WireGuard tunnel
+func runWgQuickDown(configPath string) error {
+	cmd := exec.Command("sudo", "wg-quick", "down", configPath)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
+
+// getWireGuardStats gets transfer statistics from WireGuard
+func getWireGuardStats() string {
+	// Try to find the interface
+	cmd := exec.Command("sudo", "wg", "show", "all", "transfer")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	output := strings.TrimSpace(string(out))
+	if output == "" {
+		return ""
+	}
+
+	// Parse the output (format: interface\trx\ttx)
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		parts := strings.Fields(line)
+		if len(parts) >= 3 {
+			rx, _ := strconv.ParseInt(parts[1], 10, 64)
+			tx, _ := strconv.ParseInt(parts[2], 10, 64)
+			return fmt.Sprintf("  Received: %s\n  Sent: %s", formatBytes(rx), formatBytes(tx))
+		}
+	}
+
+	return ""
 }
 
 // formatDuration formats a duration for display

@@ -19,7 +19,6 @@ export function AuthProvider({ children }) {
         } catch (err) {
           // Token invalid, clear storage
           localStorage.removeItem('access_token');
-          localStorage.removeItem('refresh_token');
         }
       }
       setLoading(false);
@@ -32,10 +31,11 @@ export function AuthProvider({ children }) {
     setError(null);
     try {
       const response = await authApi.login({ email, password });
-      const { access_token, refresh_token, user: userData } = response.data;
+      // Backend returns { user, token, access_token, expires_in }
+      const { access_token, token, user: userData } = response.data;
+      const authToken = access_token || token;
 
-      localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', refresh_token);
+      localStorage.setItem('access_token', authToken);
       setUser(userData);
 
       return { success: true };
@@ -50,10 +50,11 @@ export function AuthProvider({ children }) {
     setError(null);
     try {
       const response = await authApi.register({ email, username, password });
-      const { access_token, refresh_token, user: userData } = response.data;
+      // Backend returns { user, token, access_token, expires_in }
+      const { access_token, token, user: userData } = response.data;
+      const authToken = access_token || token;
 
-      localStorage.setItem('access_token', access_token);
-      localStorage.setItem('refresh_token', refresh_token);
+      localStorage.setItem('access_token', authToken);
       setUser(userData);
 
       return { success: true };
@@ -66,7 +67,6 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(() => {
     localStorage.removeItem('access_token');
-    localStorage.removeItem('refresh_token');
     setUser(null);
   }, []);
 

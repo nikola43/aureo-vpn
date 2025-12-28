@@ -70,6 +70,28 @@ type VPNNode struct {
 	WireGuardPort      int       `json:"wireguard_port"`
 	OpenVPNPort        int       `json:"openvpn_port"`
 	UptimePercentage   float64   `json:"uptime_percentage"`
+	PublicKey          string    `json:"public_key"`
+}
+
+// WireGuardConfigResponse is returned from /config/generate
+type WireGuardConfigResponse struct {
+	SessionID       string `json:"session_id"`
+	ServerPublicKey string `json:"server_public_key"`
+	ServerEndpoint  string `json:"server_endpoint"`
+	ClientIP        string `json:"client_ip"`
+	DNS             string `json:"dns"`
+	AllowedIPs      string `json:"allowed_ips"`
+	Keepalive       int    `json:"keepalive"`
+}
+
+// ConnectionState represents the current VPN connection state
+type ConnectionState struct {
+	NodeID      string    `json:"node_id"`
+	NodeName    string    `json:"node_name"`
+	NodeIP      string    `json:"node_ip"`
+	ClientIP    string    `json:"client_ip"`
+	ConnectedAt time.Time `json:"connected_at"`
+	SessionID   string    `json:"session_id"`
 }
 
 // NodesResponse is the response from listing nodes
@@ -506,4 +528,83 @@ func (c *Client) GetConfig(configID string) (*VPNConfig, error) {
 		return nil, err
 	}
 	return &config, nil
+}
+
+// GenerateWireGuardConfig registers with the VPN server and gets WireGuard config
+func (c *Client) GenerateWireGuardConfig(nodeID, publicKey string) (*WireGuardConfigResponse, error) {
+	req := map[string]string{
+		"node_id":    nodeID,
+		"public_key": publicKey,
+	}
+
+	var resp WireGuardConfigResponse
+	if err := c.doRequest("POST", "/api/v1/config/generate", req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// GetConfigDir returns the configuration directory path
+func (c *Client) GetConfigDir() string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "/tmp/.aureo"
+	}
+	return filepath.Join(homeDir, ".aureo")
+}
+
+// GetConnectionFilePath returns the path to the connection state file
+func (c *Client) GetConnectionFilePath() string {
+	return filepath.Join(c.GetConfigDir(), "connection.json")
+}
+
+// GetWireGuardConfigPath returns the path to the WireGuard config file
+func (c *Client) GetWireGuardConfigPath() string {
+	return filepath.Join(c.GetConfigDir(), "wg0.conf")
+}
+
+// SaveConnectionState saves the current connection state
+func (c *Client) SaveConnectionState(state *ConnectionState) error {
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(c.GetConnectionFilePath(), data, 0600)
+}
+
+// LoadConnectionState loads the current connection state
+func (c *Client) LoadConnectionState() (*ConnectionState, error) {
+	data, err := os.ReadFile(c.GetConnectionFilePath())
+	if err != nil {
+		return nil, err
+	}
+
+	var state ConnectionState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// ClearConnectionState removes the connection state file
+func (c *Client) ClearConnectionState() error {
+	connFile := c.GetConnectionFilePath()
+	if _, err := os.Stat(connFile); err == nil {
+		return os.Remove(connFile)
+	}
+	return nil
+}
+
+// IsConnected checks if there's an active VPN connection
+func (c *Client) IsConnected() bool {
+	_, err := c.LoadConnectionState()
+	return err == nil
+}
+
+// GetAPIBaseURL returns the API base URL
+func (c *Client) GetAPIBaseURL() string {
+	if c.config != nil && c.config.APIBaseURL != "" {
+		return c.config.APIBaseURL
+	}
+	return c.baseURL
 }
