@@ -27,11 +27,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Handle 401 - redirect to login
+// Handle 401 - redirect to login (except for auth endpoints)
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
-    if (error.response?.status === 401) {
+    const isAuthEndpoint = error.config?.url?.includes('/auth/');
+
+    // Only redirect for 401 on non-auth endpoints (token expired)
+    // Auth endpoints (login/register) should handle 401 themselves
+    if (error.response?.status === 401 && !isAuthEndpoint) {
       // Token invalid, clear and redirect
       localStorage.removeItem('access_token');
       window.location.href = '/login';

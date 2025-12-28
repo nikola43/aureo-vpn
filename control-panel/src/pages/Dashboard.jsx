@@ -616,14 +616,20 @@ export default function Dashboard() {
 
                 {/* Dropdown */}
                 <div className="absolute right-0 top-full mt-2 w-48 glass rounded-xl overflow-hidden opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
-                  <Link to="/settings" className="flex items-center gap-3 px-4 py-3 text-gray-300 hover:bg-white/5 transition-all">
+                  <button
+                    onClick={() => setActiveTab('settings')}
+                    className="flex items-center gap-3 px-4 py-3 text-gray-300 hover:bg-white/5 transition-all w-full"
+                  >
                     <Settings className="w-4 h-4" />
                     Settings
-                  </Link>
-                  <Link to="/profile" className="flex items-center gap-3 px-4 py-3 text-gray-300 hover:bg-white/5 transition-all">
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('settings')}
+                    className="flex items-center gap-3 px-4 py-3 text-gray-300 hover:bg-white/5 transition-all w-full"
+                  >
                     <User className="w-4 h-4" />
                     Profile
-                  </Link>
+                  </button>
                   <hr className="border-white/5" />
                   <button
                     onClick={handleLogout}

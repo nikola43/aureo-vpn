@@ -1,4 +1,4 @@
-import React from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import PageLayout from '../components/PageLayout';
@@ -14,7 +14,9 @@ import {
   ArrowRight,
   Terminal,
   FileCode,
-  Database
+  Database,
+  Copy,
+  Check
 } from 'lucide-react';
 
 const sections = [
@@ -34,7 +36,7 @@ const sections = [
     description: 'Understand the decentralized architecture of Aureo VPN.',
     links: [
       { label: 'System Overview', href: '#overview' },
-      { label: 'Components', href: '#components' },
+      { label: 'Components', href: '#architecture' },
       { label: 'P2P Network', href: '#p2p' },
     ]
   },
@@ -61,14 +63,39 @@ const sections = [
 ];
 
 function CodeBlock({ children, title }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(children);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div className="rounded-xl overflow-hidden border border-white/10">
-      {title && (
-        <div className="bg-dark-800 px-4 py-2 border-b border-white/10 flex items-center gap-2">
+      <div className="bg-dark-800 px-4 py-2 border-b border-white/10 flex items-center justify-between">
+        <div className="flex items-center gap-2">
           <Terminal className="w-4 h-4 text-gold-500" />
-          <span className="text-sm text-gray-400">{title}</span>
+          <span className="text-sm text-gray-400">{title || 'terminal'}</span>
         </div>
-      )}
+        <button
+          onClick={handleCopy}
+          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white transition-colors px-2 py-1 rounded hover:bg-white/5"
+          title="Copy to clipboard"
+        >
+          {copied ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-green-500" />
+              <span className="text-green-500">Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy</span>
+            </>
+          )}
+        </button>
+      </div>
       <pre className="bg-dark-900 p-4 overflow-x-auto">
         <code className="text-sm text-gray-300 font-mono">{children}</code>
       </pre>
@@ -100,13 +127,23 @@ export default function Documentation() {
             <ul className="space-y-2">
               {section.links.map((link) => (
                 <li key={link.href}>
-                  <Link
-                    to={link.href}
-                    className="text-sm text-gold-500 hover:text-gold-400 flex items-center gap-1"
-                  >
-                    <ArrowRight className="w-3 h-3" />
-                    {link.label}
-                  </Link>
+                  {link.href.startsWith('#') ? (
+                    <a
+                      href={link.href}
+                      className="text-sm text-gold-500 hover:text-gold-400 flex items-center gap-1"
+                    >
+                      <ArrowRight className="w-3 h-3" />
+                      {link.label}
+                    </a>
+                  ) : (
+                    <Link
+                      to={link.href}
+                      className="text-sm text-gold-500 hover:text-gold-400 flex items-center gap-1"
+                    >
+                      <ArrowRight className="w-3 h-3" />
+                      {link.label}
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>
@@ -338,7 +375,7 @@ ETHEREUM_PRIVATE_KEY=0x...`}
                 </tr>
                 <tr>
                   <td className="py-3 text-cyan-400">Platinum</td>
-                  <td className="py-3">$0.030</td>
+                  <td className="py-3">$0.025</td>
                   <td className="py-3">95%</td>
                   <td className="py-3">90</td>
                   <td className="py-3">2.0x</td>
@@ -425,6 +462,64 @@ ETHEREUM_PRIVATE_KEY=0x...`}
             <p className="text-gray-400 text-sm">libp2p-based decentralized node discovery using Kademlia DHT.</p>
             <code className="text-gold-500 text-sm">Port: 4001/TCP</code>
           </div>
+        </div>
+      </section>
+
+      {/* P2P Network Section */}
+      <section id="p2p" className="mb-16">
+        <h2 className="text-3xl font-bold text-white mb-6">P2P Network</h2>
+
+        <p className="text-gray-300 text-lg leading-relaxed mb-8">
+          Aureo VPN uses libp2p for decentralized node discovery. Nodes announce themselves to the
+          network and can be discovered without relying on a central server.
+        </p>
+
+        <div className="grid md:grid-cols-2 gap-6 mb-8">
+          <div className="glass rounded-xl p-6">
+            <h4 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+              <Globe className="w-5 h-5 text-gold-500" />
+              Kademlia DHT
+            </h4>
+            <p className="text-gray-400 mb-4">
+              Distributed hash table for peer routing. Nodes find each other through a structured
+              overlay network with O(log n) lookup complexity.
+            </p>
+            <ul className="space-y-2 text-gray-400 text-sm">
+              <li>• XOR-based distance metric</li>
+              <li>• Self-healing network topology</li>
+              <li>• No central point of failure</li>
+            </ul>
+          </div>
+          <div className="glass rounded-xl p-6">
+            <h4 className="text-lg font-bold text-white mb-3 flex items-center gap-2">
+              <Zap className="w-5 h-5 text-gold-500" />
+              Gossipsub
+            </h4>
+            <p className="text-gray-400 mb-4">
+              Pub/sub messaging protocol for node announcements and heartbeats.
+              Efficient flood-fill with mesh topology.
+            </p>
+            <ul className="space-y-2 text-gray-400 text-sm">
+              <li>• Topic-based subscriptions</li>
+              <li>• Heartbeat every 30 seconds</li>
+              <li>• Real-time status updates</li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="glass rounded-xl p-6">
+          <h4 className="font-bold text-white mb-4">P2P Configuration</h4>
+          <CodeBlock title=".env">
+{`# P2P Network Settings
+P2P_ENABLED=true
+P2P_PORT=4001
+P2P_ENABLE_DHT=true
+P2P_ENABLE_MDNS=true
+P2P_DHT_SERVER=true
+P2P_BOOTSTRAP_PEERS=/ip4/1.2.3.4/tcp/4001/p2p/QmBootstrap...
+P2P_DATA_DIR=/var/lib/aureo/p2p
+P2P_MAX_PEERS=100`}
+          </CodeBlock>
         </div>
       </section>
 

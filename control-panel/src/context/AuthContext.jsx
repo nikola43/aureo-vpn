@@ -40,7 +40,9 @@ export function AuthProvider({ children }) {
 
       return { success: true };
     } catch (err) {
-      const message = err.response?.data?.message || err.response?.data?.error || 'Login failed';
+      // Handle nested error structure: { error: { message: "..." } }
+      const errorData = err.response?.data;
+      const message = errorData?.error?.message || errorData?.message || errorData?.error || 'Login failed';
       setError(message);
       return { success: false, error: message };
     }
@@ -59,7 +61,9 @@ export function AuthProvider({ children }) {
 
       return { success: true };
     } catch (err) {
-      const message = err.response?.data?.message || err.response?.data?.error || 'Registration failed';
+      // Handle nested error structure: { error: { message: "..." } }
+      const errorData = err.response?.data;
+      const message = errorData?.error?.message || errorData?.message || errorData?.error || 'Registration failed';
       setError(message);
       return { success: false, error: message };
     }

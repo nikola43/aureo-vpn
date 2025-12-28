@@ -36,7 +36,7 @@ const tiers = [
   { name: 'Bronze', rate: '$0.010', uptime: '50%', reputation: '0', bonus: '1.0x', color: 'text-amber-600' },
   { name: 'Silver', rate: '$0.015', uptime: '80%', reputation: '60', bonus: '1.2x', color: 'text-gray-400' },
   { name: 'Gold', rate: '$0.020', uptime: '90%', reputation: '75', bonus: '1.5x', color: 'text-gold-500' },
-  { name: 'Platinum', rate: '$0.030', uptime: '95%', reputation: '90', bonus: '2.0x', color: 'text-cyan-400' },
+  { name: 'Platinum', rate: '$0.025', uptime: '95%', reputation: '90', bonus: '2.0x', color: 'text-cyan-400' },
 ];
 
 const requirements = [

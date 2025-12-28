@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import {
   Shield,
@@ -10,7 +11,6 @@ import {
   EyeOff,
   ArrowRight,
   Loader2,
-  AlertCircle,
   CheckCircle2,
   Github,
   Twitter
@@ -18,7 +18,7 @@ import {
 
 export default function Login() {
   const navigate = useNavigate();
-  const { login, isAuthenticated, error: authError, setError } = useAuth();
+  const { login, isAuthenticated, setError } = useAuth();
 
   const [formData, setFormData] = useState({
     email: '',
@@ -26,7 +26,6 @@ export default function Login() {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [error, setLocalError] = useState('');
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -40,23 +39,49 @@ export default function Login() {
     setError(null);
   }, [setError]);
 
+  // Validate email format
+  const isValidEmail = (email) => {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLocalError('');
+
+    // Validation
+    if (!formData.email.trim()) {
+      toast.error('Please enter your email address');
+      return;
+    }
+
+    if (!isValidEmail(formData.email)) {
+      toast.error('Please enter a valid email address');
+      return;
+    }
+
+    if (!formData.password) {
+      toast.error('Please enter your password');
+      return;
+    }
+
+    if (formData.password.length < 6) {
+      toast.error('Password must be at least 6 characters');
+      return;
+    }
+
     setLoading(true);
 
     const result = await login(formData.email, formData.password);
 
     if (result.success) {
-      navigate('/dashboard');
+      toast.success('Welcome back! Redirecting to dashboard...');
+      setTimeout(() => navigate('/dashboard'), 1000);
     } else {
-      setLocalError(result.error);
+      toast.error(result.error || 'Invalid email or password');
     }
 
     setLoading(false);
   };
-
-  const displayError = error || authError;
 
   return (
     <div className="min-h-screen bg-dark-950 flex">
@@ -152,18 +177,6 @@ export default function Login() {
               </Link>
             </p>
           </div>
-
-          {/* Error Message */}
-          {displayError && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-6 p-4 bg-red-500/10 border border-red-500/20 rounded-xl flex items-center gap-3"
-            >
-              <AlertCircle className="w-5 h-5 text-red-500 flex-shrink-0" />
-              <span className="text-red-400 text-sm">{displayError}</span>
-            </motion.div>
-          )}
 
           {/* Login Form */}
           <form onSubmit={handleSubmit} className="space-y-6">

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
+import { toast } from 'react-toastify';
 import { useAuth } from '../context/AuthContext';
 import {
   Shield,
@@ -61,17 +62,36 @@ export default function Register() {
     e.preventDefault();
     setLocalError('');
 
+    // Validation
+    if (!formData.email.trim()) {
+      toast.error('Please enter your email address');
+      return;
+    }
+
+    if (!formData.username.trim()) {
+      toast.error('Please enter a username');
+      return;
+    }
+
+    if (formData.username.length < 3) {
+      toast.error('Username must be at least 3 characters');
+      return;
+    }
+
     if (!isPasswordValid) {
+      toast.error('Password does not meet requirements');
       setLocalError('Password does not meet requirements');
       return;
     }
 
     if (!passwordsMatch) {
+      toast.error('Passwords do not match');
       setLocalError('Passwords do not match');
       return;
     }
 
     if (!acceptedTerms) {
+      toast.error('Please accept the terms and conditions');
       setLocalError('Please accept the terms and conditions');
       return;
     }
@@ -81,8 +101,10 @@ export default function Register() {
     const result = await register(formData.email, formData.username, formData.password);
 
     if (result.success) {
-      navigate('/dashboard');
+      toast.success('Account created! Redirecting to dashboard...');
+      setTimeout(() => navigate('/dashboard'), 1000);
     } else {
+      toast.error(result.error || 'Registration failed');
       setLocalError(result.error);
     }
 
