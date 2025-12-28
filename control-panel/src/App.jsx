@@ -551,7 +551,7 @@ function HeroSection() {
       <motion.div className="absolute inset-0 bg-gradient-to-b from-dark-950/80 via-dark-950/30 to-dark-950 z-[5]" style={{ opacity }} />
 
       {/* Content */}
-      <div className="relative z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
+      <div className="relative z-20 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-20">                                   
         <div className="text-center max-w-5xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 30 }}
