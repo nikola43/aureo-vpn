@@ -119,10 +119,12 @@ func (bc *BitcoinClient) SendTransaction(ctx context.Context, toAddress string, 
 		return nil, fmt.Errorf("invalid bitcoin address: %s", toAddress)
 	}
 
-	// Get current BTC price in USD (simplified - in production, use a price oracle)
-	// For now, assume 1 BTC = $40,000 USD
-	btcPriceUSD := 40000.0
-	btcAmount := amountUSD / btcPriceUSD
+	// Get current BTC price from oracle - SECURITY: Never use hardcoded prices
+	oracle := GetPriceOracle()
+	btcAmount, err := oracle.ConvertUSDToCrypto(ctx, "bitcoin", amountUSD)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get BTC price from oracle: %w", err)
+	}
 
 	// Send transaction using sendtoaddress RPC method
 	// This requires the wallet to be unlocked

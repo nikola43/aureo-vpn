@@ -119,10 +119,12 @@ func (lc *LitecoinClient) SendTransaction(ctx context.Context, toAddress string,
 		return nil, fmt.Errorf("invalid litecoin address: %s", toAddress)
 	}
 
-	// Get current LTC price in USD (simplified - in production, use a price oracle)
-	// For now, assume 1 LTC = $80 USD
-	ltcPriceUSD := 80.0
-	ltcAmount := amountUSD / ltcPriceUSD
+	// Get current LTC price from oracle - SECURITY: Never use hardcoded prices
+	oracle := GetPriceOracle()
+	ltcAmount, err := oracle.ConvertUSDToCrypto(ctx, "litecoin", amountUSD)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get LTC price from oracle: %w", err)
+	}
 
 	// Send transaction using sendtoaddress RPC method
 	params := []interface{}{toAddress, ltcAmount}

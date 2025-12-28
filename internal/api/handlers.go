@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
@@ -14,7 +15,11 @@ import (
 	"github.com/nikola43/aureo-vpn/pkg/models"
 	"github.com/nikola43/aureo-vpn/pkg/operator"
 	"github.com/nikola43/aureo-vpn/pkg/p2p"
+	"github.com/nikola43/aureo-vpn/pkg/security"
 )
+
+// Privacy filter for secure logging
+var privacyFilter = security.NewPrivacyFilter(nil)
 
 // Handlers holds all API handlers
 type Handlers struct {
@@ -49,17 +54,34 @@ func (h *Handlers) SetP2PClient(client *p2p.Client) {
 func (h *Handlers) Register(c *fiber.Ctx) error {
 	var req auth.RegisterRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "invalid request body",
-		})
+		secErr := security.BadRequest(err)
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
+	}
+
+	// Validate input
+	if err := security.ValidateEmail(req.Email); err != nil {
+		secErr := security.ValidationError("email", err.Error())
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
+	}
+
+	if err := security.ValidateUsername(req.Username); err != nil {
+		secErr := security.ValidationError("username", err.Error())
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
+	}
+
+	if err := security.ValidatePassword(req.Password); err != nil {
+		secErr := security.ValidationError("password", err.Error())
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
 	}
 
 	resp, err := h.authService.Register(req)
 	if err != nil {
 		metrics.LoginAttempts.WithLabelValues("failed").Inc()
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": err.Error(),
-		})
+		log.Printf("[AUTH] Registration failed: %v", privacyFilter.SanitizeLogMessage(err.Error()))
+		// Don't expose internal error details - use generic message
+		secErr := security.Conflict(err)
+		secErr.Message = "Registration failed. Email or username may already exist."
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
 	}
 
 	metrics.UserRegistrations.Inc()
@@ -72,17 +94,23 @@ func (h *Handlers) Register(c *fiber.Ctx) error {
 func (h *Handlers) Login(c *fiber.Ctx) error {
 	var req auth.LoginRequest
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "invalid request body",
-		})
+		secErr := security.BadRequest(err)
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
+	}
+
+	// Basic validation
+	if req.Email == "" || req.Password == "" {
+		secErr := security.ValidationError("email", "email and password are required")
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
 	}
 
 	resp, err := h.authService.Login(req)
 	if err != nil {
 		metrics.LoginAttempts.WithLabelValues("failed").Inc()
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": err.Error(),
-		})
+		// Don't expose whether email exists or password was wrong
+		secErr := security.Unauthorized(err)
+		secErr.Message = "Invalid email or password."
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
 	}
 
 	metrics.LoginAttempts.WithLabelValues("success").Inc()
@@ -97,16 +125,20 @@ func (h *Handlers) RefreshToken(c *fiber.Ctx) error {
 	}
 
 	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"error": "invalid request body",
-		})
+		secErr := security.BadRequest(err)
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
+	}
+
+	if req.RefreshToken == "" {
+		secErr := security.ValidationError("refresh_token", "is required")
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
 	}
 
 	accessToken, err := h.authService.RefreshToken(req.RefreshToken)
 	if err != nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"error": err.Error(),
-		})
+		secErr := security.Unauthorized(err)
+		secErr.Message = "Invalid or expired refresh token."
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
 	}
 
 	metrics.TokenGenerations.WithLabelValues("access").Inc()
@@ -861,6 +893,7 @@ func (h *Handlers) CreateSession(c *fiber.Ctx) error {
 	}
 
 	// Create pending session
+	// PRIVACY: Never store actual client IP - use anonymized hash for correlation only
 	session := models.Session{
 		UserID:            userID,
 		NodeID:            nodeID,
@@ -868,14 +901,13 @@ func (h *Handlers) CreateSession(c *fiber.Ctx) error {
 		Status:            "pending",
 		KillSwitchEnabled: true,
 		DNSLeakProtection: true,
-		ClientIP:          c.IP(),
+		ClientIP:          privacyFilter.AnonymizeIP(c.IP()), // Privacy-safe hash, not real IP
 		TunnelIP:          "", // Will be assigned by node
 	}
 
 	if err := db.Create(&session).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to create session",
-		})
+		secErr := security.InternalError(err)
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
 	}
 
 	// Return session (client should poll until active)
@@ -984,22 +1016,22 @@ func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
 	}
 
 	// Create pending session with client's public key
+	// PRIVACY: Never store actual client IP - use anonymized hash for correlation only
 	session := models.Session{
 		UserID:            userID,
 		NodeID:            nodeID,
 		Protocol:          "wireguard",
 		PublicKey:         req.PublicKey,
 		TunnelIP:          clientIP,
-		ClientIP:          c.IP(),
+		ClientIP:          privacyFilter.AnonymizeIP(c.IP()), // Privacy-safe hash, not real IP
 		Status:            "pending",
 		KillSwitchEnabled: true,
 		DNSLeakProtection: true,
 	}
 
 	if err := db.Create(&session).Error; err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"error": "failed to create session",
-		})
+		secErr := security.InternalError(err)
+		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
 	}
 
 	// Return WireGuard configuration

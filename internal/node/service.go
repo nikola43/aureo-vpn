@@ -34,6 +34,9 @@ type Service struct {
 	ctx            context.Context
 	cancel         context.CancelFunc
 
+	// Goroutine management
+	wg sync.WaitGroup
+
 	// Traffic monitoring
 	lastBytesSent     int64
 	lastBytesReceived int64
@@ -207,12 +210,28 @@ func (s *Service) Start() error {
 		log.Printf("Failed to restore active sessions: %v", err)
 	}
 
-	// Start background tasks
-	go s.heartbeatLoop()
-	go s.sessionMonitor()
-	go s.metricsCollector()
-	go s.trafficMonitor()
-	go s.watchPendingSessions()
+	// Start background tasks with proper goroutine tracking
+	s.wg.Add(5)
+	go func() {
+		defer s.wg.Done()
+		s.heartbeatLoop()
+	}()
+	go func() {
+		defer s.wg.Done()
+		s.sessionMonitor()
+	}()
+	go func() {
+		defer s.wg.Done()
+		s.metricsCollector()
+	}()
+	go func() {
+		defer s.wg.Done()
+		s.trafficMonitor()
+	}()
+	go func() {
+		defer s.wg.Done()
+		s.watchPendingSessions()
+	}()
 
 	log.Println("VPN Node Service started successfully")
 	return nil
@@ -261,10 +280,27 @@ func (s *Service) initP2P(node *models.VPNNode) error {
 	return nil
 }
 
-// Stop stops the VPN node service
+// Stop stops the VPN node service with graceful shutdown
 func (s *Service) Stop() error {
 	log.Println("Stopping VPN Node Service...")
+
+	// Cancel context to signal goroutines to stop
 	s.cancel()
+
+	// Wait for all background goroutines to finish with timeout
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+
+	// Wait up to 30 seconds for graceful shutdown
+	select {
+	case <-done:
+		log.Println("All background tasks stopped gracefully")
+	case <-time.After(30 * time.Second):
+		log.Println("Warning: Shutdown timed out, some goroutines may still be running")
+	}
 
 	// Stop P2P network
 	if s.p2pHost != nil {
@@ -280,6 +316,7 @@ func (s *Service) Stop() error {
 	}
 	s.mu.Unlock()
 
+	log.Println("VPN Node Service stopped")
 	return nil
 }
 
@@ -646,10 +683,18 @@ func (s *Service) updateTrafficStats() {
 
 			// Flush if needed (every 10 mins)
 			if time.Since(info.LastEarningsFlush) > 10*time.Minute && info.PendingBandwidthKB > 0 {
-				// Run in goroutine to avoid blocking lock
-				go s.flushEarnings(info.Session.ID, info.PendingBandwidthKB)
+				// Capture values before spawning goroutine to avoid race conditions
+				sessionID := info.Session.ID
+				bandwidthKB := info.PendingBandwidthKB
 				info.PendingBandwidthKB = 0
 				info.LastEarningsFlush = time.Now()
+
+				// Run in background with proper tracking
+				s.wg.Add(1)
+				go func() {
+					defer s.wg.Done()
+					s.flushEarnings(sessionID, bandwidthKB)
+				}()
 			}
 		}
 	}

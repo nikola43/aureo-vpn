@@ -70,10 +70,12 @@ func (ec *EthereumClient) SendTransaction(ctx context.Context, toAddress string,
 	}
 	to := common.HexToAddress(toAddress)
 
-	// Get current ETH price in USD (simplified - in production, use a price oracle)
-	// For now, assume 1 ETH = $2000 USD
-	ethPriceUSD := 2000.0
-	ethAmount := amountUSD / ethPriceUSD
+	// Get current ETH price from oracle - SECURITY: Never use hardcoded prices
+	oracle := GetPriceOracle()
+	ethAmount, err := oracle.ConvertUSDToCrypto(ctx, "ethereum", amountUSD)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get ETH price from oracle: %w", err)
+	}
 
 	// Convert to Wei (1 ETH = 10^18 Wei)
 	amountWei := new(big.Float).Mul(big.NewFloat(ethAmount), big.NewFloat(1e18))

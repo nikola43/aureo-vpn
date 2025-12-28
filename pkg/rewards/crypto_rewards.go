@@ -256,30 +256,31 @@ func (rs *RewardService) executeBlockchainTransaction(ctx context.Context, payou
 	var tx *blockchain.Transaction
 	var err error
 
-	if rs.blockchain != nil {
-		// Use real blockchain service
-		tx, err = rs.blockchain.SendTransaction(ctx, payout.CryptoCurrency, payout.WalletAddress, payout.AmountUSD)
-		if err != nil {
-			rs.log.Error("blockchain transaction failed",
-				"payout_id", payout.ID,
-				"error", err,
-			)
-			rs.db.Model(payout).Updates(map[string]interface{}{
-				"status":         "failed",
-				"failure_reason": err.Error(),
-			})
-			return
-		}
-	} else {
-		// Fallback to mock transaction if blockchain service is not configured
-		rs.log.Warn("blockchain service not configured, using mock transaction", "payout_id", payout.ID)
-		time.Sleep(2 * time.Second)
-		tx = &blockchain.Transaction{
-			TxHash:         fmt.Sprintf("MOCK_%s", uuid.New().String()[:16]),
-			BlockchainType: payout.CryptoCurrency,
-			To:             payout.WalletAddress,
-			Status:         "pending",
-		}
+	// SECURITY: Blockchain service MUST be configured for real payouts
+	// Mock transactions are NOT allowed in production
+	if rs.blockchain == nil {
+		rs.log.Error("CRITICAL: blockchain service not configured - refusing to process payout",
+			"payout_id", payout.ID,
+		)
+		rs.db.Model(payout).Updates(map[string]interface{}{
+			"status":         "failed",
+			"failure_reason": "Blockchain service not configured. Contact system administrator.",
+		})
+		return
+	}
+
+	// Use real blockchain service
+	tx, err = rs.blockchain.SendTransaction(ctx, payout.CryptoCurrency, payout.WalletAddress, payout.AmountUSD)
+	if err != nil {
+		rs.log.Error("blockchain transaction failed",
+			"payout_id", payout.ID,
+			"error", err,
+		)
+		rs.db.Model(payout).Updates(map[string]interface{}{
+			"status":         "failed",
+			"failure_reason": err.Error(),
+		})
+		return
 	}
 
 	// Update payout with transaction hash
