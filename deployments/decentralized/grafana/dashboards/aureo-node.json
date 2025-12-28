@@ -233,12 +233,12 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(aureo_vpn_bytes_received_total[5m])",
+          "expr": "irate(aureo_vpn_bytes_received_total[1m])",
           "legendFormat": "Received",
           "refId": "A"
         },
         {
-          "expr": "rate(aureo_vpn_bytes_sent_total[5m])",
+          "expr": "irate(aureo_vpn_bytes_sent_total[1m])",
           "legendFormat": "Sent",
           "refId": "B"
         }

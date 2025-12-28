@@ -310,16 +310,18 @@ func (v *VPNService) updateTrafficMetrics() {
 
 	// Calculate delta and update Prometheus counters
 	v.mu.Lock()
-	if v.totalBytesIn > 0 || v.totalBytesOut > 0 {
-		rxDelta := totalRxBytes - v.totalBytesIn
-		txDelta := totalTxBytes - v.totalBytesOut
-		if rxDelta > 0 {
-			metrics.VPNBytesReceived.Add(float64(rxDelta))
-		}
-		if txDelta > 0 {
-			metrics.VPNBytesSent.Add(float64(txDelta))
-		}
+	rxDelta := totalRxBytes - v.totalBytesIn
+	txDelta := totalTxBytes - v.totalBytesOut
+
+	// Add positive deltas to Prometheus counters
+	// This includes the first call where we capture all accumulated bytes
+	if rxDelta > 0 {
+		metrics.VPNBytesReceived.Add(float64(rxDelta))
 	}
+	if txDelta > 0 {
+		metrics.VPNBytesSent.Add(float64(txDelta))
+	}
+
 	v.totalBytesIn = totalRxBytes
 	v.totalBytesOut = totalTxBytes
 	v.mu.Unlock()
