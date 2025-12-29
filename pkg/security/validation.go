@@ -40,7 +40,7 @@ const (
 	MaxUsernameLength    = 64
 	MinUsernameLength    = 3
 	MaxPasswordLength    = 128
-	MinPasswordLength    = 12
+	MinPasswordLength    = 6
 	MaxHostnameLength    = 253
 	MaxCountryCodeLength = 2
 	MaxInputLength       = 10000
@@ -185,16 +185,16 @@ type PasswordStrength struct {
 	MaxRepeating    int
 }
 
-// DefaultPasswordStrength returns secure default requirements
+// DefaultPasswordStrength returns default requirements (simplified for easy setup)
 func DefaultPasswordStrength() *PasswordStrength {
 	return &PasswordStrength{
-		MinLength:      12,
-		RequireUpper:   true,
-		RequireLower:   true,
-		RequireDigit:   true,
-		RequireSpecial: true,
+		MinLength:      6,
+		RequireUpper:   false,
+		RequireLower:   false,
+		RequireDigit:   false,
+		RequireSpecial: false,
 		DisallowCommon: true,
-		MaxRepeating:   3,
+		MaxRepeating:   5,
 	}
 }
 

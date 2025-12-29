@@ -78,13 +78,11 @@ import {
 // 3D COMPONENTS
 // ============================================
 
-const PARTICLE_COUNT = 5000;
-
-function ParticleField() {
+function ParticleField({ count = 5000 }) {
   const ref = useRef();
   const positions = useMemo(() => {
-    const pos = new Float32Array(PARTICLE_COUNT * 3);
-    for (let i = 0; i < PARTICLE_COUNT; i++) {
+    const pos = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       const r = 2 + Math.random() * 0.5;
@@ -93,7 +91,7 @@ function ParticleField() {
       pos[i * 3 + 2] = r * Math.cos(phi);
     }
     return pos;
-  }, []);
+  }, [count]);
 
   useFrame((state) => {
     if (ref.current) {
