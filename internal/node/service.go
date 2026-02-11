@@ -138,6 +138,11 @@ func (s *Service) loadActiveSessions() error {
 			PublicKey:         session.PublicKey,
 			LastKeepalive:     time.Now(),
 			LastEarningsFlush: time.Now(),
+			LastStatsFlush:    time.Now(),
+			BytesSent:         session.BytesSent,
+			BytesReceived:     session.BytesReceived,
+			LastBytesSent:     session.BytesSent,
+			LastBytesReceived: session.BytesReceived,
 		}
 		restoredCount++
 	}
@@ -415,6 +420,7 @@ func (s *Service) CreateSession(userID uuid.UUID, protocol string) (*models.Sess
 		PublicKey:         keyPair.PublicKey,
 		LastKeepalive:     time.Now(),
 		LastEarningsFlush: time.Now(),
+		LastStatsFlush:    time.Now(),
 	}
 
 	// Update metrics
@@ -442,6 +448,16 @@ func (s *Service) disconnectSession(sessionID uuid.UUID) error {
 	// Flush remaining earnings
 	if sessionInfo.PendingBandwidthKB > 0 {
 		s.flushEarnings(sessionID, sessionInfo.PendingBandwidthKB)
+	}
+
+	// Flush final traffic stats to DB
+	totalBytes := float64(sessionInfo.BytesSent+sessionInfo.BytesReceived) / (1024 * 1024 * 1024)
+	if err := s.db.Model(&models.Session{}).Where("id = ?", sessionID).Updates(map[string]interface{}{
+		"bytes_sent":     sessionInfo.BytesSent,
+		"bytes_received": sessionInfo.BytesReceived,
+		"data_used_gb":   totalBytes,
+	}).Error; err != nil {
+		log.Printf("Failed to flush final traffic stats for session %s: %v", sessionID, err)
 	}
 
 	// Remove peer from WireGuard
@@ -657,13 +673,15 @@ func (s *Service) updateTrafficStats() {
 	s.mu.Lock()
 	for _, info := range s.activeSessions {
 		if peer, ok := peerStats[info.PublicKey]; ok {
-			// Initialize if first run (LastBytesSent == 0)
+			// Update last keepalive from WireGuard handshake
+			if !peer.LatestHandshake.IsZero() {
+				info.LastKeepalive = peer.LatestHandshake
+			}
+
+			// Initialize baseline if first run
 			if info.LastBytesSent == 0 && info.LastBytesReceived == 0 {
 				info.LastBytesSent = peer.BytesSent
 				info.LastBytesReceived = peer.BytesReceived
-				info.BytesSent = peer.BytesSent
-				info.BytesReceived = peer.BytesReceived
-				continue
 			}
 
 			info.BytesSent = peer.BytesSent
@@ -688,12 +706,14 @@ func (s *Service) updateTrafficStats() {
 				bytesSent := info.BytesSent
 				bytesReceived := info.BytesReceived
 				totalBytes := float64(bytesSent+bytesReceived) / (1024 * 1024 * 1024)
+				lastKeepalive := info.LastKeepalive
 				info.LastStatsFlush = time.Now()
 
 				go s.db.Model(&models.Session{}).Where("id = ?", sessionID).Updates(map[string]any{
 					"bytes_sent":     bytesSent,
 					"bytes_received": bytesReceived,
 					"data_used_gb":   totalBytes,
+					"last_keepalive": lastKeepalive,
 				})
 			}
 
@@ -925,6 +945,7 @@ func (s *Service) provisionSession(session *models.Session) error {
 		PublicKey:         clientPublicKey,
 		LastKeepalive:     time.Now(),
 		LastEarningsFlush: time.Now(),
+		LastStatsFlush:    time.Now(),
 	}
 
 	log.Printf("Provisioned session %s for user %s", session.ID, session.UserID)
