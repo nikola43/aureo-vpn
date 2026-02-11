@@ -37,6 +37,8 @@ type Config struct {
 	Country     string
 	CountryCode string
 	City        string
+	Latitude    float64
+	Longitude   float64
 
 	// P2P
 	BootstrapPeers []string
@@ -128,6 +130,8 @@ func parseFlags() Config {
 	flag.StringVar(&config.Country, "country", "", "Country name")
 	flag.StringVar(&config.CountryCode, "country-code", "", "Country code (e.g., US)")
 	flag.StringVar(&config.City, "city", "", "City name")
+	flag.Float64Var(&config.Latitude, "latitude", 0, "Node latitude")
+	flag.Float64Var(&config.Longitude, "longitude", 0, "Node longitude")
 
 	// P2P
 	var bootstrapPeers string
@@ -396,6 +400,8 @@ func (n *DecentralizedNode) startP2P() error {
 		Country:           n.config.Country,
 		CountryCode:       n.config.CountryCode,
 		City:              n.config.City,
+		Latitude:          n.config.Latitude,
+		Longitude:         n.config.Longitude,
 		MaxConnections:    100,
 		Status:            "online",
 		SupportsWireGuard: true,

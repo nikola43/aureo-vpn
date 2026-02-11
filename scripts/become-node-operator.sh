@@ -1757,17 +1757,17 @@ register_node() {
     HOSTNAME=$(hostname)
     INTERNAL_IP="10.8.0.1"  # WireGuard server IP
 
-    # Auto-detect geolocation using ip-api.com (free, no API key required)
+    # Auto-detect geolocation using geo.kamero.ai
     echo -e "${CYAN}Detecting server location...${NC}"
-    GEO_DATA=$(curl -s "http://ip-api.com/json/$PUBLIC_IP?fields=status,country,countryCode,city,lat,lon,isp" 2>/dev/null)
+    GEO_DATA=$(curl -s "https://geo.kamero.ai/api/geo" 2>/dev/null)
 
-    if echo "$GEO_DATA" | jq -e '.status == "success"' >/dev/null 2>&1; then
-        COUNTRY=$(echo "$GEO_DATA" | jq -r '.country // "Unknown"')
-        COUNTRY_CODE=$(echo "$GEO_DATA" | jq -r '.countryCode // "US"')
+    if echo "$GEO_DATA" | jq -e '.city' >/dev/null 2>&1; then
+        COUNTRY_CODE=$(echo "$GEO_DATA" | jq -r '.country // "US"')
+        COUNTRY="$COUNTRY_CODE"
         CITY=$(echo "$GEO_DATA" | jq -r '.city // "Unknown"')
-        LATITUDE=$(echo "$GEO_DATA" | jq -r '.lat // 0')
-        LONGITUDE=$(echo "$GEO_DATA" | jq -r '.lon // 0')
-        ISP=$(echo "$GEO_DATA" | jq -r '.isp // "Unknown"')
+        LATITUDE=$(echo "$GEO_DATA" | jq -r '.latitude // "0"')
+        LONGITUDE=$(echo "$GEO_DATA" | jq -r '.longitude // "0"')
+        ISP="Unknown"
         echo -e "${GREEN}✓ Location detected${NC}"
     else
         echo -e "${YELLOW}⚠ Could not detect location, using defaults${NC}"

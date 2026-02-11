@@ -42,6 +42,8 @@ services:
       - COUNTRY=${COUNTRY:-}
       - COUNTRY_CODE=${COUNTRY_CODE:-}
       - CITY=${CITY:-}
+      - LATITUDE=${LATITUDE:-}
+      - LONGITUDE=${LONGITUDE:-}
       - BOOTSTRAP_PEERS=${BOOTSTRAP_PEERS:-}
       - ENABLE_API=true
       - ENABLE_VPN=true
