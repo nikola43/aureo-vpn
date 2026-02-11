@@ -729,6 +729,8 @@ func (s *APIServer) generateConfig(c *fiber.Ctx) error {
 		"server_endpoint":   fmt.Sprintf("%s:%d", s.config.PublicIP, s.config.WGPort),
 		"client_ip":         session.TunnelIP,
 		"dns":               "1.1.1.1,8.8.8.8",
+		"allowed_ips":       "0.0.0.0/0",
+		"keepalive":         25,
 		"session_id":        session.ID,
 	})
 }
