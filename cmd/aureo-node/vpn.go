@@ -378,11 +378,21 @@ func (v *VPNService) checkSessions() {
 	}
 
 	// Check for inactive sessions and update per-session stats
+	db := database.GetDB()
 	for sessionID, sessionInfo := range v.sessions {
 		if peerData, ok := peerStats[sessionInfo.PublicKey]; ok {
 			sessionInfo.LastKeepalive = peerData.lastHandshake
 			sessionInfo.BytesIn = peerData.rxBytes
 			sessionInfo.BytesOut = peerData.txBytes
+
+			// Flush session traffic stats to DB so the mobile app can poll them
+			if db != nil && (peerData.rxBytes > 0 || peerData.txBytes > 0) {
+				go db.Model(&models.Session{}).Where("id = ?", sessionID).Updates(map[string]any{
+					"bytes_sent":     peerData.txBytes,
+					"bytes_received": peerData.rxBytes,
+					"data_used_gb":   float64(peerData.txBytes+peerData.rxBytes) / (1024 * 1024 * 1024),
+				})
+			}
 		}
 
 		// Disconnect if no activity for 10 minutes

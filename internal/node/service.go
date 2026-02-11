@@ -55,6 +55,7 @@ type SessionInfo struct {
 	LastBytesReceived  int64
 	PendingBandwidthKB int64
 	LastEarningsFlush  time.Time
+	LastStatsFlush     time.Time
 }
 
 // NewService creates a new VPN node service
@@ -679,6 +680,21 @@ func (s *Service) updateTrafficStats() {
 
 				info.LastBytesSent = info.BytesSent
 				info.LastBytesReceived = info.BytesReceived
+			}
+
+			// Flush session traffic stats to DB every 3 seconds so the mobile app can poll them
+			if time.Since(info.LastStatsFlush) >= 3*time.Second {
+				sessionID := info.Session.ID
+				bytesSent := info.BytesSent
+				bytesReceived := info.BytesReceived
+				totalBytes := float64(bytesSent+bytesReceived) / (1024 * 1024 * 1024)
+				info.LastStatsFlush = time.Now()
+
+				go s.db.Model(&models.Session{}).Where("id = ?", sessionID).Updates(map[string]any{
+					"bytes_sent":     bytesSent,
+					"bytes_received": bytesReceived,
+					"data_used_gb":   totalBytes,
+				})
 			}
 
 			// Flush if needed (every 10 mins)
