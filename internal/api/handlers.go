@@ -909,9 +909,13 @@ func (h *Handlers) CreateSession(c *fiber.Ctx) error {
 		TunnelIP:          "", // Will be assigned by node
 	}
 
+	log.Printf("[CreateSession] creating session: userID=%s nodeID=%s protocol=%s", userID, nodeID, req.Protocol)
 	if err := db.Create(&session).Error; err != nil {
-		secErr := security.InternalError(err)
-		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
+		log.Printf("[CreateSession] ERROR creating session: %v", err)
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "session_creation_failed",
+			"message": fmt.Sprintf("Failed to create session: %v", err),
+		})
 	}
 
 	// Return session (client should poll until active)
@@ -969,6 +973,8 @@ func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
 		})
 	}
 
+	log.Printf("[GenerateConfig] userID=%s nodeID=%s publicKey=%s", userID, req.NodeID, req.PublicKey)
+
 	if req.NodeID == "" || req.PublicKey == "" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error": "node_id and public_key are required",
@@ -987,10 +993,14 @@ func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
 	// Get node details
 	var node models.VPNNode
 	if err := db.First(&node, nodeID).Error; err != nil {
+		log.Printf("[GenerateConfig] node not found: %v", err)
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "node not found",
 		})
 	}
+
+	log.Printf("[GenerateConfig] node: name=%s status=%s internalIP=%s publicIP=%s connections=%d/%d",
+		node.Name, node.Status, node.InternalIP, node.PublicIP, node.CurrentConnections, node.MaxConnections)
 
 	if node.Status != "online" {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
@@ -1013,6 +1023,8 @@ func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
 
 	// Allocate client IP (simple allocation from the node's internal subnet)
 	clientIP := allocateClientIP(node.InternalIP, usedIPs)
+	log.Printf("[GenerateConfig] allocatedIP=%s usedIPs=%v internalIP=%s", clientIP, usedIPs, node.InternalIP)
+
 	if clientIP == "" {
 		return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
 			"error": "no available IP addresses",
@@ -1034,9 +1046,17 @@ func (h *Handlers) GenerateConfig(c *fiber.Ctx) error {
 	}
 
 	if err := db.Create(&session).Error; err != nil {
-		secErr := security.InternalError(err)
-		return c.Status(secErr.HTTPStatus()).JSON(secErr.ClientResponse())
+		log.Printf("[GenerateConfig] ERROR creating session: %v", err)
+		log.Printf("[GenerateConfig] session details: userID=%s nodeID=%s protocol=%s tunnelIP=%s clientIP=%s publicKey=%s",
+			session.UserID, session.NodeID, session.Protocol, session.TunnelIP, session.ClientIP, session.PublicKey)
+		// Return actual error message for debugging
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error":   "session_creation_failed",
+			"message": fmt.Sprintf("Failed to create session: %v", err),
+		})
 	}
+
+	log.Printf("[GenerateConfig] session created: id=%s", session.ID)
 
 	// Return WireGuard configuration
 	// The VPN node will pick up this pending session and add the peer
