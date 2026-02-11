@@ -26,7 +26,7 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 # Configuration
-API_URL="${API_URL:-http://136.244.70.78:8080}"
+API_URL="${API_URL:-https://api.aureovpn.com}"
 CONFIG_DIR="$HOME/.aureo-vpn"
 SESSION_FILE="$CONFIG_DIR/.session"
 CONNECTION_FILE="$CONFIG_DIR/.connection"
@@ -438,7 +438,7 @@ cmd_help() {
     echo "  help        - Show this help"
     echo ""
     echo "Environment Variables:"
-    echo "  API_URL     - API server URL (default: http://136.244.70.78)"
+    echo "  API_URL     - API server URL (default: https://api.aureovpn.com)"
     echo "  VERBOSE     - Set to 1 for debug output"
     echo ""
     echo "Examples:"
