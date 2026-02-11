@@ -529,13 +529,18 @@ detect_info() {
 
     echo -e "${CYAN}Detecting location...${NC}"
     if [ -n "$PUBLIC_IP" ]; then
-        LOCATION=$(curl -s --max-time 5 "http://ip-api.com/json/$PUBLIC_IP" 2>/dev/null || echo "{}")
+        LOCATION=$(curl -s --max-time 5 "https://geo.kamero.ai/api/geo" 2>/dev/null || echo "{}")
         if [ -n "$LOCATION" ] && [ "$LOCATION" != "{}" ]; then
-            AUTO_COUNTRY=$(echo "$LOCATION" | grep -o '"country":"[^"]*"' | cut -d'"' -f4)
-            AUTO_COUNTRY_CODE=$(echo "$LOCATION" | grep -o '"countryCode":"[^"]*"' | cut -d'"' -f4)
+            AUTO_COUNTRY_CODE=$(echo "$LOCATION" | grep -o '"country":"[^"]*"' | cut -d'"' -f4)
+            AUTO_COUNTRY="$AUTO_COUNTRY_CODE"
             AUTO_CITY=$(echo "$LOCATION" | grep -o '"city":"[^"]*"' | cut -d'"' -f4)
-            if [ -n "$AUTO_CITY" ] && [ -n "$AUTO_COUNTRY" ]; then
-                echo -e "${GREEN}✓ Location: $AUTO_CITY, $AUTO_COUNTRY ($AUTO_COUNTRY_CODE)${NC}"
+            AUTO_LATITUDE=$(echo "$LOCATION" | grep -o '"latitude":"[^"]*"' | cut -d'"' -f4)
+            AUTO_LONGITUDE=$(echo "$LOCATION" | grep -o '"longitude":"[^"]*"' | cut -d'"' -f4)
+            if [ -z "$PUBLIC_IP" ]; then
+                PUBLIC_IP=$(echo "$LOCATION" | grep -o '"ip":"[^"]*"' | cut -d'"' -f4)
+            fi
+            if [ -n "$AUTO_CITY" ] && [ -n "$AUTO_COUNTRY_CODE" ]; then
+                echo -e "${GREEN}✓ Location: $AUTO_CITY, $AUTO_COUNTRY_CODE [$AUTO_LATITUDE, $AUTO_LONGITUDE]${NC}"
             fi
         fi
     fi
