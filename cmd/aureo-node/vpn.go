@@ -282,7 +282,8 @@ func (v *VPNService) sessionMonitor() {
 	}
 }
 
-// updateTrafficMetrics reads WireGuard stats and updates Prometheus metrics
+// updateTrafficMetrics reads WireGuard stats, updates Prometheus metrics,
+// and flushes per-session byte counters to the DB for mobile app polling.
 func (v *VPNService) updateTrafficMetrics() {
 	// Get WireGuard peer stats
 	output, err := exec.Command("wg", "show", "wg0", "dump").Output()
@@ -292,19 +293,27 @@ func (v *VPNService) updateTrafficMetrics() {
 
 	var totalRxBytes, totalTxBytes int64
 
+	// Build per-peer byte map
+	peerBytes := make(map[string][2]int64) // pubkey -> [rx, tx]
+
 	lines := strings.Split(string(output), "\n")
 	for _, line := range lines[1:] { // Skip first line (interface info)
 		fields := strings.Fields(line)
 		if len(fields) >= 7 {
+			pubKey := fields[0]
 			rxBytesStr := fields[5]
 			txBytesStr := fields[6]
 
-			if rx, err := strconv.ParseInt(rxBytesStr, 10, 64); err == nil {
+			var rx, tx int64
+			if r, err := strconv.ParseInt(rxBytesStr, 10, 64); err == nil {
+				rx = r
 				totalRxBytes += rx
 			}
-			if tx, err := strconv.ParseInt(txBytesStr, 10, 64); err == nil {
+			if t, err := strconv.ParseInt(txBytesStr, 10, 64); err == nil {
+				tx = t
 				totalTxBytes += tx
 			}
+			peerBytes[pubKey] = [2]int64{rx, tx}
 		}
 	}
 
@@ -314,7 +323,6 @@ func (v *VPNService) updateTrafficMetrics() {
 	txDelta := totalTxBytes - v.totalBytesOut
 
 	// Add positive deltas to Prometheus counters
-	// This includes the first call where we capture all accumulated bytes
 	if rxDelta > 0 {
 		metrics.VPNBytesReceived.Add(float64(rxDelta))
 	}
@@ -324,6 +332,23 @@ func (v *VPNService) updateTrafficMetrics() {
 
 	v.totalBytesIn = totalRxBytes
 	v.totalBytesOut = totalTxBytes
+
+	// Flush per-session traffic to DB
+	db := database.GetDB()
+	if db != nil {
+		for sessionID, info := range v.sessions {
+			if bytes, ok := peerBytes[info.PublicKey]; ok {
+				rx, tx := bytes[0], bytes[1]
+				if rx > 0 || tx > 0 {
+					sid := sessionID
+					go db.Model(&models.LocalSession{}).Where("id = ?", sid).Updates(map[string]any{
+						"bytes_sent":     tx,
+						"bytes_received": rx,
+					})
+				}
+			}
+		}
+	}
 	v.mu.Unlock()
 }
 
@@ -378,21 +403,11 @@ func (v *VPNService) checkSessions() {
 	}
 
 	// Check for inactive sessions and update per-session stats
-	db := database.GetDB()
 	for sessionID, sessionInfo := range v.sessions {
 		if peerData, ok := peerStats[sessionInfo.PublicKey]; ok {
 			sessionInfo.LastKeepalive = peerData.lastHandshake
 			sessionInfo.BytesIn = peerData.rxBytes
 			sessionInfo.BytesOut = peerData.txBytes
-
-			// Flush session traffic stats to DB so the mobile app can poll them
-			if db != nil && (peerData.rxBytes > 0 || peerData.txBytes > 0) {
-				go db.Model(&models.Session{}).Where("id = ?", sessionID).Updates(map[string]any{
-					"bytes_sent":     peerData.txBytes,
-					"bytes_received": peerData.rxBytes,
-					"data_used_gb":   float64(peerData.txBytes+peerData.rxBytes) / (1024 * 1024 * 1024),
-				})
-			}
 		}
 
 		// Disconnect if no activity for 10 minutes

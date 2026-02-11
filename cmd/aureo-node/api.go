@@ -195,6 +195,7 @@ func (s *APIServer) setupRoutes() {
 	protected.Post("/connect", s.connect)
 	protected.Post("/disconnect", s.disconnect)
 	protected.Get("/sessions", s.getSessions)
+	protected.Get("/sessions/:id", s.getSessionByID)
 	protected.Get("/config", s.getConfig)
 	protected.Post("/config/generate", s.generateConfig) // Client script compatibility
 }
@@ -649,6 +650,22 @@ func (s *APIServer) getSessions(c *fiber.Ctx) error {
 		"sessions": sessions,
 		"count":    len(sessions),
 	})
+}
+
+func (s *APIServer) getSessionByID(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uuid.UUID)
+	sessionID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid session id"})
+	}
+
+	db := database.GetDB()
+	var session models.LocalSession
+	if err := db.Where("id = ? AND user_id = ?", sessionID, userID).First(&session).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "session not found"})
+	}
+
+	return c.JSON(session)
 }
 
 func (s *APIServer) getConfig(c *fiber.Ctx) error {
