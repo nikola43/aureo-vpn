@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -155,10 +156,34 @@ func (s *Service) loadActiveSessions() error {
 func (s *Service) Start() error {
 	log.Println("Starting VPN Node Service...")
 
-	// Load node configuration
+	// Load node configuration, auto-register if not found
 	var node models.VPNNode
 	if err := s.db.First(&node, s.nodeID).Error; err != nil {
-		return fmt.Errorf("failed to load node: %w", err)
+		if err == gorm.ErrRecordNotFound {
+			log.Println("Node not found in database, auto-registering...")
+			hostname, _ := os.Hostname()
+			node = models.VPNNode{
+				ID:            s.nodeID,
+				Name:          fmt.Sprintf("node-%s", s.nodeID.String()[:8]),
+				Hostname:      hostname,
+				Country:       "Unknown",
+				CountryCode:   "XX",
+				City:          "Unknown",
+				PublicIP:      "0.0.0.0",
+				InternalIP:    "10.0.0.1",
+				WireGuardPort: 51820,
+				OpenVPNPort:   1194,
+				Status:        "online",
+				IsActive:      true,
+				LastHeartbeat:  time.Now(),
+			}
+			if err := s.db.Create(&node).Error; err != nil {
+				return fmt.Errorf("failed to auto-register node: %w", err)
+			}
+			log.Printf("Node %s auto-registered successfully", s.nodeID)
+		} else {
+			return fmt.Errorf("failed to load node: %w", err)
+		}
 	}
 
 	// Generate server keypair if not exists

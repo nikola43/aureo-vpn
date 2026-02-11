@@ -21,6 +21,9 @@ func NewManager(interfaceName string) *Manager {
 
 // SetupInterface creates and configures a WireGuard interface
 func (m *Manager) SetupInterface(config ServerConfig) error {
+	// Remove existing interface if present (from a previous failed start)
+	_ = exec.Command("ip", "link", "del", "dev", m.interfaceName).Run()
+
 	// Create WireGuard interface
 	cmd := exec.Command("ip", "link", "add", "dev", m.interfaceName, "type", "wireguard")
 	if err := cmd.Run(); err != nil {
